@@ -22,7 +22,18 @@ Kiwi consumes Mustela through its public API only. No WebKit types above the eng
 
 ## Status
 
-Nesting. The engine is being built in [Mustela](https://github.com/mel0k1/Mustela) (currently M1.5: privacy policy with runtime toggle, history store); the Kiwi UI starts once the engine API settles.
+First flight (K1). Kiwi builds on Linux against the [Mustela](https://github.com/mel0k1/Mustela) engine: a GTK window with tabs (favicons, drag-reorderable), an address bar driven by the engine's entry pipeline (`resolve_entry` — keyword search shortcuts, URL passthrough), a privacy toggle, a history screen and a downloads screen. Every web view comes from the engine's view library (`include/mustela/view.hpp`, `libmustela_view_gtk`) — the privacy pipeline (cookies, ITP, fingerprint budget, tracker blocklist, GPC, per-site dressing), branded error pages, downloads, JS dialogs, permission prompts and popups all live below the UI boundary, and Kiwi itself links GTK without a single WebKit type.
+
+Build:
+
+```bash
+git clone https://github.com/mel0k1/Mustela.git ../Mustela
+cmake -S ../Mustela -B ../Mustela/build -DCMAKE_BUILD_TYPE=Release
+cmake --build ../Mustela/build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/kiwi
+```
 
 ## Ecosystem
 

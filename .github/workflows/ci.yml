@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: linux build and smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build pkg-config libwebkit2gtk-4.1-dev xvfb
+
+      - name: Checkout Mustela engine
+        run: git clone --depth 1 https://github.com/mel0k1/Mustela.git ../Mustela
+
+      - name: Build engine
+        run: |
+          cmake -S ../Mustela -B ../Mustela/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build ../Mustela/build
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Smoke
+        run: |
+          xvfb-run -a bash -c '
+            env WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 ./build/kiwi about:blank &
+            pid=$!
+            sleep 12
+            if kill -0 $pid 2>/dev/null; then
+              kill $pid
+              echo "kiwi smoke: process ran and was stopped"
+              exit 0
+            fi
+            wait $pid
+            code=$?
+            echo "kiwi smoke: exited early with $code"
+            exit $code
+          '

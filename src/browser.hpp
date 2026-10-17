@@ -1,0 +1,67 @@
+#pragma once
+
+#include <gtk/gtk.h>
+
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "mustela/mustela.hpp"
+#include "mustela/view.hpp"
+
+struct KiwiTab {
+    std::unique_ptr<mustela::View> view;
+    GtkWidget* label = nullptr;
+    GtkWidget* icon = nullptr;
+    GtkWidget* title_label = nullptr;
+    std::string title;
+    std::string uri;
+    bool private_tab = false;
+};
+
+struct DownloadRow {
+    std::uint64_t id = 0;
+    std::string name;
+    std::string path;
+    double progress = 0;
+    bool running = true;
+    bool failed = false;
+};
+
+struct Browser {
+    mustela::Settings settings;
+    mustela::PrivacyPolicy privacy;
+    std::unique_ptr<mustela::SiteRules> sites;
+    std::unique_ptr<mustela::Profile> profile;
+    std::unique_ptr<mustela::HistoryStore> history;
+    std::unique_ptr<mustela::ViewSession> session;
+    GtkWidget* window = nullptr;
+    GtkWidget* notebook = nullptr;
+    GtkWidget* url_entry = nullptr;
+    GtkWidget* back_btn = nullptr;
+    GtkWidget* forward_btn = nullptr;
+    GtkWidget* reload_btn = nullptr;
+    GtkWidget* private_toggle = nullptr;
+    GtkWidget* status_label = nullptr;
+    GtkWidget* downloads_btn = nullptr;
+    GtkWidget* history_window = nullptr;
+    GtkWidget* downloads_window = nullptr;
+    GtkWidget* downloads_tree = nullptr;
+    GtkListStore* downloads_store = nullptr;
+    std::string hover_link;
+    std::vector<std::unique_ptr<KiwiTab>> tabs;
+    std::map<std::uint64_t, DownloadRow> downloads;
+    bool start_private = false;
+};
+
+void build_browser_ui(Browser& b, const char* startup_url);
+KiwiTab* open_tab(Browser& b, const std::string& url, bool force_private = false);
+void close_tab(Browser& b, KiwiTab* tab);
+void navigate_active(Browser& b, const std::string& entry_text);
+void refresh_chrome(Browser& b);
+
+void open_history_window(Browser& b);
+void open_downloads_window(Browser& b);
+void refresh_downloads_window(Browser& b);

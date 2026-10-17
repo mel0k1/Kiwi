@@ -5,7 +5,7 @@
 ![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-2f74c0)
 ![license](https://img.shields.io/badge/license-LGPL--2.1-e0a03d)
 ![engine](https://img.shields.io/badge/engine-Mustela-3a7d44)
-![status](https://img.shields.io/badge/status-nesting-d95f5f)
+![status](https://img.shields.io/badge/status-first_flight-3a7d44)
 
 Приватный веб-браузер на движке [Mustela](https://github.com/mel0k1/Mustela). Талисман — птичка киви: маленькая, любопытная и очень скрытная насчёт своей норки.
 
@@ -22,7 +22,18 @@ Kiwi работает с Mustela только через его публичны
 
 ## Статус
 
-Гнездуемся. Движок строится в [Mustela](https://github.com/mel0k1/Mustela) (сейчас M1.5: политика приватности с переключением на лету, хранилище истории); интерфейс Kiwi стартует, когда API движка устаканится.
+Первый полёт (K1). Kiwi собирается на Linux поверх движка [Mustela](https://github.com/mel0k1/Mustela): GTK-окно с вкладками (favicon, перетаскивание), адресная строка на входном конвейере движка (`resolve_entry` — поиск по ключевым словам, passthrough URL), переключатель приватности, экран истории и экран загрузок. Каждый web-view приходит из view-библиотеки движка (`include/mustela/view.hpp`, `libmustela_view_gtk`) — privacy-конвейер (cookies, ITP, бюджет фингерпринта, трекер-блоклист, GPC, пер-сайтовый dressing), брендированные страницы ошибок, загрузки, JS-диалоги, запросы разрешений и попапы живут ниже границы UI, а сам Kiwi линкуется с GTK без единого типа WebKit.
+
+Сборка:
+
+```bash
+git clone https://github.com/mel0k1/Mustela.git ../Mustela
+cmake -S ../Mustela -B ../Mustela/build -DCMAKE_BUILD_TYPE=Release
+cmake --build ../Mustela/build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/kiwi
+```
 
 ## Экосистема
 
