@@ -33,7 +33,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/mel0k1/Mustela.git
-        tag: v0.22.0
+        tag: v0.22.1
   - name: kiwi
     buildsystem: cmake-ninja
     builddir: true
