@@ -77,6 +77,8 @@ if(KIWI_BUILD_TESTS)
     target_include_directories(kiwi_updater_tests PRIVATE
         src
         ${MUSTELA_ROOT}/include
+        ${MUSTELA_ROOT}/src
+        ${MUSTELA_ROOT}/src/core
         ${GTK_INCLUDE_DIRS}
         ${SOUP_INCLUDE_DIRS})
     target_compile_definitions(kiwi_updater_tests PRIVATE
