@@ -703,8 +703,6 @@ void updates_refresh_ui(Browser* b) {
 
 }
 
-namespace {
-
 void open_settings_window(Browser& b) {
     if (b.settings_window) {
         gtk_window_present(GTK_WINDOW(b.settings_window));
@@ -735,6 +733,4 @@ void open_settings_window(Browser& b) {
     refresh_engines_list();
     refresh_profiles_list();
     gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook), 0);
-}
-
 }

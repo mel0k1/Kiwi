@@ -73,13 +73,13 @@ jobs:
     name: flatpak bundle
     runs-on: ubuntu-24.04
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
       options: --privileged
     steps:
       - uses: actions/checkout@v4
 
       - name: Build bundle
-        uses: flatpak/flatpak-builder-github-action@v6
+        uses: flathub-infra/flatpak-builder-action@v6
         with:
           bundle: kiwi.flatpak
           manifest-path: packaging/flatpak/io.github.mel0k1.Kiwi.yml
@@ -93,71 +93,10 @@ jobs:
           path: kiwi.flatpak
           if-no-files-found: error
 
-  windows:
-    name: windows portable build
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: >-
-            git
-            zip
-            mingw-w64-x86_64-ntldd
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-gtk3
-            mingw-w64-x86_64-libsoup3
-            mingw-w64-x86_64-webkit2gtk-4.1
-
-      - name: Build engine and Kiwi
-        shell: msys2 {0}
-        run: |
-          set -e
-          git clone --depth 1 --branch v0.22.0 https://github.com/mel0k1/Mustela.git ../Mustela
-          cmake -S ../Mustela -B ../Mustela/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DMUSTELA_BUILD_SHELL=OFF -DMUSTELA_BUILD_TESTS=OFF -DMUSTELA_BUILD_BENCH=OFF \
-            -DMUSTELA_BUILD_VIEW=ON
-          cmake --build ../Mustela/build
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build
-
-      - name: Bundle portable ZIP
-        shell: msys2 {0}
-        run: |
-          set -e
-          VER=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          mkdir -p bundle
-          cp build/kiwi.exe bundle/
-          cp ../Mustela/build/mustela-webext*.dll bundle/ 2>/dev/null || true
-          cp /mingw64/bin/WebKitWebProcess.exe bundle/ 2>/dev/null || true
-          cp /mingw64/bin/WebKitNetworkProcess.exe bundle/ 2>/dev/null || true
-          for exe in build/kiwi.exe /mingw64/bin/WebKitWebProcess.exe /mingw64/bin/WebKitNetworkProcess.exe; do
-            [ -f "$exe" ] || continue
-            ntldd -R "$exe" 2>/dev/null | grep mingw64 | awk '{print $1}' | while read -r dll; do
-              base=$(basename "$dll")
-              [ -f "bundle/$base" ] || cp "/mingw64/bin/$base" bundle/ || true
-            done
-          done
-          printf '@echo off\r\nset "PATH=%%~dp0;%%PATH%%"\r\nset WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1\r\nstart "" "%%~dp0kiwi.exe" %%*\r\n' > bundle/kiwi.bat
-          zip -r "kiwi-${VER}-win64.zip" bundle
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: kiwi-windows-${{ github.sha }}
-          path: kiwi-*-win64.zip
-          if-no-files-found: error
-
   release:
     name: attach packages to the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, flatpak, windows]
+    needs: [linux, flatpak]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
