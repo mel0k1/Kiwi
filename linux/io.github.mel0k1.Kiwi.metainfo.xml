@@ -27,6 +27,15 @@
     <binary>kiwi</binary>
   </provides>
   <releases>
+    <release version="0.7.0" date="2026-10-17">
+      <description>
+        <p>Import bookmarks from other browsers: a Settings page detects Chrome, Edge, Brave,
+        Vivaldi, Opera, Chromium and Firefox profiles, imports their bookmarks (Firefox through
+        its bookmark backups) and reads universal bookmarks HTML exports, with duplicate
+        skipping. Tab drag and drop: drop a link or an address onto a tab to load it there;
+        tab reordering keeps its notebook drag.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-10-18">
       <description>
         <p>Identity and platform dressing: full hicolor icon set, project website, page saving

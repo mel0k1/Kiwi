@@ -23,7 +23,7 @@ jobs:
           sudo apt-get install -y cmake ninja-build pkg-config libwebkit2gtk-4.1-dev libsoup-3.0-dev xvfb
 
       - name: Checkout Mustela engine
-        run: git clone --depth 1 --branch v0.23.0 https://github.com/mel0k1/Mustela.git ../Mustela
+        run: git clone --depth 1 --branch v0.24.0 https://github.com/mel0k1/Mustela.git ../Mustela
 
       - name: Build engine
         run: |

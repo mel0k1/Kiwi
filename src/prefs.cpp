@@ -30,12 +30,22 @@ enum ProfileCols {
     PC_N
 };
 
+enum ImportCols {
+    IC_BROWSER,
+    IC_PROFILE,
+    IC_PATH,
+    IC_N
+};
+
 struct PrefsPage {
     Browser* b = nullptr;
     GtkListStore* engines_store = nullptr;
     GtkWidget* engines_tree = nullptr;
     GtkListStore* profiles_store = nullptr;
     GtkWidget* profiles_tree = nullptr;
+    GtkListStore* import_store = nullptr;
+    GtkWidget* import_tree = nullptr;
+    GtkWidget* import_status = nullptr;
     GtkWidget* updates_status = nullptr;
     GtkWidget* updates_notes = nullptr;
     GtkWidget* updates_check_btn = nullptr;
@@ -703,11 +713,171 @@ void updates_refresh_ui(Browser* b) {
 
 }
 
+// ---- import from browsers (K2 leftover) ----
+
+namespace {
+
+void refresh_import_list() {
+    if (!g_prefs.import_store) return;
+    gtk_list_store_clear(g_prefs.import_store);
+    std::vector<mustela::DetectedProfile> found = mustela::detect_browsers();
+    for (const mustela::DetectedProfile& item : found) {
+        GtkTreeIter iter;
+        gtk_list_store_append(g_prefs.import_store, &iter);
+        gtk_list_store_set(g_prefs.import_store, &iter,
+            IC_BROWSER, item.browser.c_str(),
+            IC_PROFILE, item.profile.c_str(),
+            IC_PATH, item.path.c_str(), -1);
+    }
+    if (found.empty() && g_prefs.import_status) {
+        gtk_label_set_text(GTK_LABEL(g_prefs.import_status),
+            "No other browser profiles detected.");
+    }
+}
+
+void set_import_status(const std::string& text) {
+    if (g_prefs.import_status) {
+        gtk_label_set_text(GTK_LABEL(g_prefs.import_status), text.c_str());
+    }
+}
+
+void apply_import_report(const mustela::ImportReport& report) {
+    if (!report.error.empty()) {
+        set_import_status("Import failed: " + report.error);
+        return;
+    }
+    std::string text = "Imported " + std::to_string(report.bookmarks_added)
+        + " bookmark" + (report.bookmarks_added == 1 ? "" : "s");
+    if (report.bookmarks_skipped > 0) {
+        text += " (" + std::to_string(report.bookmarks_skipped) + " duplicate"
+            + (report.bookmarks_skipped == 1 ? "" : "s") + " skipped)";
+    }
+    set_import_status(text);
+    if (g_prefs.b) {
+        refresh_bookmarks_window(*g_prefs.b);
+        flash_status(*g_prefs.b, text);
+    }
+}
+
+void on_import_rescan(GtkButton*, gpointer) {
+    refresh_import_list();
+    set_import_status("Rescanned.");
+}
+
+void on_import_profile(GtkButton*, gpointer) {
+    if (!g_prefs.b) return;
+    std::string path = selected_row_text(g_prefs.import_tree, IC_PATH);
+    std::string browser = selected_row_text(g_prefs.import_tree, IC_BROWSER);
+    if (path.empty()) {
+        set_import_status("Select a detected browser profile first.");
+        return;
+    }
+    std::string lower = to_lower_ascii(browser);
+    if (lower == "firefox") {
+        apply_import_report(mustela::import_bookmarks_firefox(path, *g_prefs.b->bookmarks));
+    } else {
+        apply_import_report(mustela::import_bookmarks_chromium(path, *g_prefs.b->bookmarks));
+    }
+}
+
+void on_import_html(GtkButton*, gpointer) {
+    if (!g_prefs.b) return;
+    GtkWidget* chooser = gtk_file_chooser_dialog_new("Import bookmarks from HTML — Kiwi",
+        GTK_WINDOW(g_prefs.b->settings_window ? g_prefs.b->settings_window : g_prefs.b->window),
+        GTK_FILE_CHOOSER_ACTION_OPEN,
+        "Cancel", GTK_RESPONSE_CANCEL, "Import", GTK_RESPONSE_ACCEPT, nullptr);
+    GtkFileFilter* filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "Bookmarks HTML");
+    gtk_file_filter_add_pattern(filter, "*.html");
+    gtk_file_filter_add_pattern(filter, "*.htm");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
+    gint choice = gtk_dialog_run(GTK_DIALOG(chooser));
+    std::string path;
+    if (choice == GTK_RESPONSE_ACCEPT) {
+        gchar* chosen = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        if (chosen) path = chosen;
+        g_free(chosen);
+    }
+    gtk_widget_destroy(chooser);
+    if (path.empty()) return;
+    apply_import_report(mustela::import_bookmarks_html(path, *g_prefs.b->bookmarks));
+}
+
+GtkWidget* build_import_page(Browser& b) {
+    (void)b;
+    GtkWidget* page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 6);
+
+    GtkWidget* hint = gtk_label_new(
+        "Imports bookmarks from browsers installed on this machine. "
+        "History and passwords are not touched.");
+    gtk_style_context_add_class(gtk_widget_get_style_context(hint), "kiwi-secondary");
+    gtk_label_set_xalign(GTK_LABEL(hint), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+    gtk_box_pack_start(GTK_BOX(page), hint, FALSE, FALSE, 0);
+
+    g_prefs.import_store = gtk_list_store_new(IC_N, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    GtkWidget* tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(g_prefs.import_store));
+    g_object_unref(g_prefs.import_store);
+    g_prefs.import_tree = tree;
+
+    GtkCellRenderer* renderer = gtk_cell_renderer_text_new();
+    const char* titles[] = {"Browser", "Profile", "Location"};
+    for (int col = 0; col < IC_N; ++col) {
+        gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(tree), -1, titles[col], renderer,
+            "text", col, nullptr);
+    }
+    gtk_tree_view_column_set_expand(gtk_tree_view_get_column(GTK_TREE_VIEW(tree), IC_PATH), TRUE);
+
+    GtkWidget* scroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_AUTOMATIC,
+        GTK_POLICY_AUTOMATIC);
+    gtk_widget_set_size_request(scroll, -1, 180);
+    gtk_container_add(GTK_CONTAINER(scroll), tree);
+
+    GtkWidget* rescan_btn = gtk_button_new_with_label("Rescan");
+    GtkWidget* import_btn = gtk_button_new_with_label("Import bookmarks");
+    gtk_style_context_add_class(gtk_widget_get_style_context(import_btn), "kiwi-accent");
+    g_signal_connect(rescan_btn, "clicked", G_CALLBACK(on_import_rescan), nullptr);
+    g_signal_connect(import_btn, "clicked", G_CALLBACK(on_import_profile), nullptr);
+
+    GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_box_pack_start(GTK_BOX(buttons), rescan_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons), import_btn, FALSE, FALSE, 0);
+
+    GtkWidget* status = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(status), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
+    gtk_label_set_selectable(GTK_LABEL(status), TRUE);
+    g_prefs.import_status = status;
+
+    GtkWidget* html_btn = gtk_button_new_with_label("Import from HTML file…");
+    GtkWidget* html_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget* html_hint = gtk_label_new(
+        "Any browser can export bookmarks as HTML — Chrome, Edge and Firefox all do.");
+    gtk_style_context_add_class(gtk_widget_get_style_context(html_hint), "kiwi-secondary");
+    gtk_label_set_xalign(GTK_LABEL(html_hint), 0.0f);
+    gtk_box_pack_start(GTK_BOX(html_row), html_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(html_row), html_hint, FALSE, FALSE, 4);
+
+    gtk_box_pack_start(GTK_BOX(page), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(page), buttons, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(page), status, FALSE, FALSE, 2);
+    gtk_box_pack_start(GTK_BOX(page), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 4);
+    gtk_box_pack_start(GTK_BOX(page), html_row, FALSE, FALSE, 0);
+
+    refresh_import_list();
+    return page;
+}
+
+}
+
 void open_settings_window(Browser& b) {
     if (b.settings_window) {
         gtk_window_present(GTK_WINDOW(b.settings_window));
         refresh_engines_list();
         refresh_profiles_list();
+        refresh_import_list();
         return;
     }
 
@@ -725,6 +895,8 @@ void open_settings_window(Browser& b) {
         gtk_label_new("Search engines"));
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_profiles_page(b),
         gtk_label_new("Profiles"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_import_page(b),
+        gtk_label_new("Import"));
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_updates_page(b),
         gtk_label_new("About & updates"));
 
