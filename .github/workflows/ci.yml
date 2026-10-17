@@ -72,14 +72,11 @@ jobs:
   flatpak:
     name: flatpak bundle
     runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
-      options: --privileged
     steps:
       - uses: actions/checkout@v4
 
       - name: Build bundle
-        uses: flatpak/flatpak-github-actions@v6.8
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: kiwi.flatpak
           manifest-path: packaging/flatpak/io.github.mel0k1.Kiwi.yml
