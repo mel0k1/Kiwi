@@ -109,7 +109,9 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --title "Kiwi $TAG" --generate-notes || true
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --title "Kiwi $TAG" --generate-notes
           find artifacts -type f -exec gh release upload "$TAG" {} --clobber \;
+          gh release view "$TAG" --json assets --jq '.assets[].name'
