@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
     if (browser.privacy.history_enabled) {
         browser.history = std::make_unique<mustela::HistoryStore>(browser.profile->paths().history);
     }
+    browser.bookmarks = std::make_unique<mustela::BookmarkStore>(browser.profile->paths().bookmarks);
     browser.start_private = start_private
         || browser.privacy.default_private == mustela::TabPrivacy::Private;
 

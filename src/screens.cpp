@@ -788,3 +788,276 @@ void open_privacy_window(Browser& b, const std::string& focus_host) {
     refresh_site_list();
     gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook), 0);
 }
+
+// ---------------- Bookmarks (K3) ----------------
+
+enum BookmarkCols {
+    BM_TITLE,
+    BM_URL,
+    BM_ADDED
+};
+
+bool has_url_scheme(const std::string& url) {
+    if (url.find("://") != std::string::npos) return true;
+    static const char* schemes[] = {"about:", "data:", "file:", "javascript:", "mailto:", "blob:"};
+    for (const char* scheme : schemes) {
+        if (url.rfind(scheme, 0) == 0) return true;
+    }
+    return false;
+}
+
+void on_bookmarks_destroy(GtkWidget*, gpointer user_data) {
+    Browser* b = static_cast<Browser*>(user_data);
+    if (!b) return;
+    b->bookmarks_window = nullptr;
+    b->bookmarks_store = nullptr;
+}
+
+void update_bookmark_star(Browser& b) {
+    if (!b.url_entry) return;
+    KiwiTab* tab = active_tab(b);
+    bool marked = tab && b.bookmarks && !tab->uri.empty() && b.bookmarks->contains(tab->uri);
+    gtk_entry_set_icon_from_icon_name(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
+        marked ? "starred-symbolic" : "non-starred-symbolic");
+}
+
+void toggle_bookmark(Browser& b) {
+    if (!b.bookmarks) return;
+    KiwiTab* tab = active_tab(b);
+    if (!tab || tab->uri.empty()) return;
+    if (b.bookmarks->contains(tab->uri)) {
+        b.bookmarks->remove(tab->uri);
+        flash_status(b, "bookmark removed");
+    } else {
+        b.bookmarks->add(tab->uri, tab->title.empty() ? tab->uri : tab->title,
+            static_cast<std::int64_t>(std::time(nullptr)));
+        flash_status(b, "bookmark added");
+    }
+    refresh_bookmarks_window(b);
+    update_bookmark_star(b);
+}
+
+// ---- bookmark editor ----
+
+struct BookmarkEditor {
+    Browser* b = nullptr;
+    GtkWidget* dialog = nullptr;
+    GtkWidget* url = nullptr;
+    GtkWidget* title = nullptr;
+    GtkWidget* hint = nullptr;
+    std::string original_url;
+    std::int64_t added_at = 0;
+};
+
+void on_bookmark_editor_destroy(GtkWidget*, gpointer user_data) {
+    delete static_cast<BookmarkEditor*>(user_data);
+}
+
+void on_bookmark_editor_response(GtkDialog* dialog, gint response, gpointer user_data) {
+    BookmarkEditor* e = static_cast<BookmarkEditor*>(user_data);
+    if (response == GTK_RESPONSE_OK && e && e->b && e->b->bookmarks) {
+        std::string url = trim_copy(gtk_entry_get_text(GTK_ENTRY(e->url)));
+        std::string title = trim_copy(gtk_entry_get_text(GTK_ENTRY(e->title)));
+        if (url.empty()) {
+            gtk_label_set_text(GTK_LABEL(e->hint), "URL is required.");
+            return;
+        }
+        if (!has_url_scheme(url)) url = "https://" + url;
+        if (e->added_at == 0) e->added_at = static_cast<std::int64_t>(std::time(nullptr));
+        if (!e->original_url.empty() && e->original_url != url) e->b->bookmarks->remove(e->original_url);
+        e->b->bookmarks->add(url, title, e->added_at);
+        refresh_bookmarks_window(*e->b);
+        update_bookmark_star(*e->b);
+    }
+    gtk_widget_destroy(GTK_WIDGET(dialog));
+}
+
+void open_bookmark_editor(Browser& b, const std::string& url, const std::string& title,
+    std::int64_t added_at) {
+    BookmarkEditor* e = new BookmarkEditor;
+    e->b = &b;
+    e->original_url = url;
+    e->added_at = added_at;
+    e->dialog = gtk_dialog_new_with_buttons(
+        url.empty() ? "Add bookmark — Kiwi" : "Edit bookmark — Kiwi",
+        b.bookmarks_window ? GTK_WINDOW(b.bookmarks_window) : GTK_WINDOW(b.window),
+        static_cast<GtkDialogFlags>(GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT),
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        "_Save", GTK_RESPONSE_OK,
+        nullptr);
+    GtkWidget* save_btn = gtk_dialog_get_widget_for_response(GTK_DIALOG(e->dialog), GTK_RESPONSE_OK);
+    if (save_btn) gtk_style_context_add_class(gtk_widget_get_style_context(save_btn), "kiwi-accent");
+    g_signal_connect(e->dialog, "destroy", G_CALLBACK(on_bookmark_editor_destroy), e);
+    g_signal_connect(e->dialog, "response", G_CALLBACK(on_bookmark_editor_response), e);
+
+    GtkWidget* grid = gtk_grid_new();
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 4);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    gtk_container_set_border_width(GTK_CONTAINER(grid), 8);
+
+    const auto attach_row = [&grid](int row, const char* text, GtkWidget* widget) {
+        GtkWidget* label = gtk_label_new(text);
+        gtk_label_set_xalign(GTK_LABEL(label), 0.0f);
+        gtk_grid_attach(GTK_GRID(grid), label, 0, row, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), widget, 1, row, 1, 1);
+    };
+
+    e->url = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(e->url), "example.org/page");
+    if (!url.empty()) gtk_entry_set_text(GTK_ENTRY(e->url), url.c_str());
+    attach_row(0, "URL", e->url);
+
+    e->title = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(e->title), "page title (optional)");
+    if (!title.empty()) gtk_entry_set_text(GTK_ENTRY(e->title), title.c_str());
+    attach_row(1, "Title", e->title);
+
+    e->hint = gtk_label_new("https:// is added automatically when the scheme is missing.");
+    gtk_style_context_add_class(gtk_widget_get_style_context(e->hint), "kiwi-secondary");
+    gtk_label_set_xalign(GTK_LABEL(e->hint), 0.0f);
+
+    GtkWidget* content = gtk_dialog_get_content_area(GTK_DIALOG(e->dialog));
+    gtk_box_pack_start(GTK_BOX(content), grid, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(content), e->hint, FALSE, FALSE, 4);
+
+    gtk_widget_show_all(e->dialog);
+}
+
+// ---- bookmarks window ----
+
+std::string selected_bookmark_url(Browser& b) {
+    if (!b.bookmarks_window) return std::string();
+    GtkWidget* tree = static_cast<GtkWidget*>(g_object_get_data(
+        G_OBJECT(b.bookmarks_window), "kiwi-bookmark-tree"));
+    if (!tree) return std::string();
+    GtkTreeSelection* selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree));
+    GtkTreeModel* model = nullptr;
+    GtkTreeIter iter;
+    if (!gtk_tree_selection_get_selected(selection, &model, &iter)) return std::string();
+    gchar* url = nullptr;
+    gtk_tree_model_get(model, &iter, BM_URL, &url, -1);
+    std::string out = url ? url : "";
+    g_free(url);
+    return out;
+}
+
+void refresh_bookmarks_window(Browser& b) {
+    if (!b.bookmarks_store) return;
+    gtk_list_store_clear(b.bookmarks_store);
+    if (!b.bookmarks) return;
+    for (const mustela::BookmarkEntry& entry : b.bookmarks->entries()) {
+        GtkTreeIter iter;
+        gtk_list_store_append(b.bookmarks_store, &iter);
+        gtk_list_store_set(b.bookmarks_store, &iter,
+            BM_TITLE, entry.title.c_str(),
+            BM_URL, entry.url.c_str(),
+            BM_ADDED, format_time(entry.added_at).c_str(), -1);
+    }
+}
+
+void on_bookmark_row_activated(GtkTreeView*, GtkTreePath*, GtkTreeViewColumn*, gpointer user_data) {
+    Browser* b = static_cast<Browser*>(user_data);
+    if (b) {
+        std::string url = selected_bookmark_url(*b);
+        if (!url.empty()) open_tab(*b, url, false);
+    }
+}
+
+void on_bookmark_add(GtkButton*, gpointer user_data) {
+    Browser* b = static_cast<Browser*>(user_data);
+    if (b) open_bookmark_editor(*b, "", "", 0);
+}
+
+void on_bookmark_edit(GtkButton*, gpointer user_data) {
+    Browser* b = static_cast<Browser*>(user_data);
+    if (!b || !b->bookmarks) return;
+    std::string url = selected_bookmark_url(*b);
+    if (url.empty()) return;
+    std::string title;
+    std::int64_t added_at = 0;
+    for (const mustela::BookmarkEntry& entry : b->bookmarks->entries()) {
+        if (entry.url == url) {
+            title = entry.title;
+            added_at = entry.added_at;
+            break;
+        }
+    }
+    open_bookmark_editor(*b, url, title, added_at);
+}
+
+void on_bookmark_remove(GtkButton*, gpointer user_data) {
+    Browser* b = static_cast<Browser*>(user_data);
+    if (!b || !b->bookmarks) return;
+    std::string url = selected_bookmark_url(*b);
+    if (url.empty()) return;
+    b->bookmarks->remove(url);
+    refresh_bookmarks_window(*b);
+    update_bookmark_star(*b);
+}
+
+void open_bookmarks_window(Browser& b) {
+    if (b.bookmarks_window) {
+        gtk_window_present(GTK_WINDOW(b.bookmarks_window));
+        refresh_bookmarks_window(b);
+        return;
+    }
+
+    GtkWidget* window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    b.bookmarks_window = window;
+    gtk_window_set_title(GTK_WINDOW(window), "Bookmarks — Kiwi");
+    gtk_window_set_default_size(GTK_WINDOW(window), 720, 480);
+    gtk_window_set_transient_for(GTK_WINDOW(window), GTK_WINDOW(b.window));
+    g_signal_connect(window, "destroy", G_CALLBACK(on_bookmarks_destroy), &b);
+
+    b.bookmarks_store = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    GtkWidget* tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(b.bookmarks_store));
+    g_object_unref(b.bookmarks_store);
+    g_object_set_data(G_OBJECT(window), "kiwi-bookmark-tree", tree);
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(tree), TRUE);
+
+    GtkCellRenderer* renderer = gtk_cell_renderer_text_new();
+    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(tree), -1, "Title", renderer,
+        "text", BM_TITLE, nullptr);
+    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(tree), -1, "URL", renderer,
+        "text", BM_URL, nullptr);
+    gtk_tree_view_insert_column_with_attributes(GTK_TREE_VIEW(tree), -1, "Added", renderer,
+        "text", BM_ADDED, nullptr);
+    gtk_tree_view_column_set_expand(gtk_tree_view_get_column(GTK_TREE_VIEW(tree), BM_URL), TRUE);
+    g_signal_connect(tree, "row-activated", G_CALLBACK(on_bookmark_row_activated), &b);
+
+    GtkWidget* scroll = gtk_scrolled_window_new(nullptr, nullptr);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_AUTOMATIC,
+        GTK_POLICY_AUTOMATIC);
+    gtk_container_add(GTK_CONTAINER(scroll), tree);
+
+    GtkWidget* add_btn = gtk_button_new_with_label("Add…");
+    gtk_style_context_add_class(gtk_widget_get_style_context(add_btn), "kiwi-accent");
+    GtkWidget* edit_btn = gtk_button_new_with_label("Edit…");
+    GtkWidget* remove_btn = gtk_button_new_with_label("Remove");
+    g_signal_connect(add_btn, "clicked", G_CALLBACK(on_bookmark_add), &b);
+    g_signal_connect(edit_btn, "clicked", G_CALLBACK(on_bookmark_edit), &b);
+    g_signal_connect(remove_btn, "clicked", G_CALLBACK(on_bookmark_remove), &b);
+
+    GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_box_pack_start(GTK_BOX(buttons), add_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons), edit_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons), remove_btn, FALSE, FALSE, 0);
+
+    GtkWidget* hint = gtk_label_new(
+        "Bookmarks live in the active profile. Ctrl+D bookmarks the current page.");
+    gtk_style_context_add_class(gtk_widget_get_style_context(hint), "kiwi-secondary");
+    gtk_label_set_xalign(GTK_LABEL(hint), 0.0f);
+
+    GtkWidget* bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_box_pack_start(GTK_BOX(bottom), hint, TRUE, TRUE, 0);
+    gtk_box_pack_end(GTK_BOX(bottom), buttons, FALSE, FALSE, 0);
+
+    GtkWidget* layout = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_container_set_border_width(GTK_CONTAINER(layout), 4);
+    gtk_box_pack_start(GTK_BOX(layout), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(layout), bottom, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(window), layout);
+
+    gtk_widget_show_all(window);
+    refresh_bookmarks_window(b);
+}

@@ -96,12 +96,6 @@ gboolean restore_status(gpointer) {
     return G_SOURCE_REMOVE;
 }
 
-void flash_status(Browser& b, const std::string& text) {
-    if (!b.status_label) return;
-    gtk_label_set_text(GTK_LABEL(b.status_label), text.c_str());
-    g_timeout_add_seconds(3, restore_status, nullptr);
-}
-
 std::string sanitize_label_text(const std::string& raw) {
     std::string text = mustela::sanitize_dialog_text(raw, 256);
     return text;
@@ -312,6 +306,14 @@ void on_downloads_clicked(GtkButton*, gpointer) {
     open_downloads_window(*browser);
 }
 
+void on_bookmark_icon_pressed(GtkEntry*, GtkEntryIconPosition, GdkEventButton*, gpointer) {
+    toggle_bookmark(*browser);
+}
+
+void on_settings_clicked(GtkButton*, gpointer) {
+    open_settings_window(*browser);
+}
+
 void on_privacy_clicked(GtkButton*, gpointer) {
     if (!browser) return;
     std::string host;
@@ -347,6 +349,18 @@ gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer) {
     }
     if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_j) {
         open_downloads_window(b);
+        return TRUE;
+    }
+    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_d) {
+        toggle_bookmark(b);
+        return TRUE;
+    }
+    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && event->keyval == GDK_KEY_O) {
+        open_bookmarks_window(b);
+        return TRUE;
+    }
+    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_comma) {
+        open_settings_window(b);
         return TRUE;
     }
     if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_r) {
@@ -403,6 +417,12 @@ void on_destroy(GtkWidget*, gpointer) {
 
 }
 
+void flash_status(Browser& b, const std::string& text) {
+    if (!b.status_label) return;
+    gtk_label_set_text(GTK_LABEL(b.status_label), text.c_str());
+    g_timeout_add_seconds(3, restore_status, nullptr);
+}
+
 KiwiTab* active_tab(Browser& b) {
     gint page = gtk_notebook_get_current_page(GTK_NOTEBOOK(b.notebook));
     if (page < 0 || page >= static_cast<gint>(b.tabs.size())) return nullptr;
@@ -424,6 +444,7 @@ void refresh_chrome(Browser& b) {
     update_window_title(b);
     refresh_status(b);
     update_privacy_indicator(b);
+    update_bookmark_star(b);
 }
 
 void navigate_active(Browser& b, const std::string& entry_text) {
@@ -635,6 +656,11 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_widget_set_tooltip_text(b.privacy_btn, "Privacy Center — site overrides and stored data");
     b.url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(b.url_entry), "Search or enter address");
+    gtk_entry_set_icon_from_icon_name(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
+        "non-starred-symbolic");
+    gtk_entry_set_icon_tooltip_text(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
+        "Bookmark this page (Ctrl+D)");
+    g_signal_connect(b.url_entry, "icon-press", G_CALLBACK(on_bookmark_icon_pressed), nullptr);
     b.status_label = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(b.status_label), 1.0f);
     gtk_style_context_add_class(gtk_widget_get_style_context(b.status_label), "kiwi-status");
@@ -642,12 +668,17 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_widget_set_margin_end(b.status_label, 6);
     gtk_widget_set_valign(b.status_label, GTK_ALIGN_CENTER);
     gtk_widget_set_tooltip_text(b.status_label,
-        "Cookie policy, tracking prevention and fingerprint budget. Ctrl+H history, Ctrl+J downloads");
+        "Cookie policy, tracking prevention and fingerprint budget. "
+        "Ctrl+D bookmark, Ctrl+Shift+O bookmarks, Ctrl+H history, Ctrl+J downloads");
     GtkWidget* new_tab_btn = gtk_button_new_from_icon_name("tab-new-symbolic", GTK_ICON_SIZE_BUTTON);
     b.downloads_btn = gtk_button_new_from_icon_name("document-save-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_button_set_relief(GTK_BUTTON(b.downloads_btn), GTK_RELIEF_NONE);
     gtk_widget_set_focus_on_click(b.downloads_btn, FALSE);
     gtk_widget_set_tooltip_text(b.downloads_btn, "Downloads (Ctrl+J)");
+    b.settings_btn = gtk_button_new_from_icon_name("emblem-system-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_button_set_relief(GTK_BUTTON(b.settings_btn), GTK_RELIEF_NONE);
+    gtk_widget_set_focus_on_click(b.settings_btn, FALSE);
+    gtk_widget_set_tooltip_text(b.settings_btn, "Settings — search engines and profiles (Ctrl+,)");
 
     GtkWidget* toolbar_buttons[] = {b.back_btn, b.forward_btn, b.reload_btn, new_tab_btn};
     for (GtkWidget* btn : toolbar_buttons) {
@@ -665,6 +696,7 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_box_pack_start(GTK_BOX(toolbar), b.privacy_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b.url_entry, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b.downloads_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b.settings_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), new_tab_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b.status_label, FALSE, FALSE, 0);
 
@@ -684,6 +716,7 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     g_signal_connect(b.privacy_btn, "clicked", G_CALLBACK(on_privacy_clicked), nullptr);
     g_signal_connect(new_tab_btn, "clicked", G_CALLBACK(on_new_tab), nullptr);
     g_signal_connect(b.downloads_btn, "clicked", G_CALLBACK(on_downloads_clicked), nullptr);
+    g_signal_connect(b.settings_btn, "clicked", G_CALLBACK(on_settings_clicked), nullptr);
     g_signal_connect(b.url_entry, "activate", G_CALLBACK(on_url_activate), nullptr);
     g_signal_connect(b.notebook, "switch-page", G_CALLBACK(on_switch_page), nullptr);
     g_signal_connect(b.notebook, "page-removed", G_CALLBACK(on_page_removed), nullptr);
