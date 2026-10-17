@@ -9,9 +9,13 @@
 #include "mustela/view.hpp"
 
 #include "browser.hpp"
+#include "theme.hpp"
 
 int main(int argc, char** argv) {
     gtk_init(&argc, &argv);
+
+    kiwi::apply_theme();
+    kiwi::apply_app_icon();
 
     const char* url = nullptr;
     bool start_private = false;

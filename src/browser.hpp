@@ -44,10 +44,12 @@ struct Browser {
     GtkWidget* forward_btn = nullptr;
     GtkWidget* reload_btn = nullptr;
     GtkWidget* private_toggle = nullptr;
+    GtkWidget* privacy_btn = nullptr;
     GtkWidget* status_label = nullptr;
     GtkWidget* downloads_btn = nullptr;
     GtkWidget* history_window = nullptr;
     GtkWidget* downloads_window = nullptr;
+    GtkWidget* privacy_window = nullptr;
     GtkWidget* downloads_tree = nullptr;
     GtkListStore* downloads_store = nullptr;
     std::string hover_link;
@@ -57,6 +59,7 @@ struct Browser {
 };
 
 void build_browser_ui(Browser& b, const char* startup_url);
+KiwiTab* active_tab(Browser& b);
 KiwiTab* open_tab(Browser& b, const std::string& url, bool force_private = false);
 void close_tab(Browser& b, KiwiTab* tab);
 void navigate_active(Browser& b, const std::string& entry_text);
@@ -65,3 +68,5 @@ void refresh_chrome(Browser& b);
 void open_history_window(Browser& b);
 void open_downloads_window(Browser& b);
 void refresh_downloads_window(Browser& b);
+void open_privacy_window(Browser& b, const std::string& focus_host = std::string());
+void update_privacy_indicator(Browser& b);

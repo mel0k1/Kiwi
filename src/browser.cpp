@@ -312,6 +312,14 @@ void on_downloads_clicked(GtkButton*, gpointer) {
     open_downloads_window(*browser);
 }
 
+void on_privacy_clicked(GtkButton*, gpointer) {
+    if (!browser) return;
+    std::string host;
+    KiwiTab* tab = active_tab(*browser);
+    if (tab && tab->view) host = mustela::host_from_uri(tab->uri);
+    open_privacy_window(*browser, host);
+}
+
 gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer) {
     Browser& b = *browser;
     GdkModifierType mods = static_cast<GdkModifierType>(event->state & gtk_accelerator_get_default_mod_mask());
@@ -415,6 +423,7 @@ void refresh_chrome(Browser& b) {
     gtk_notebook_set_show_tabs(GTK_NOTEBOOK(b.notebook), gtk_notebook_get_n_pages(GTK_NOTEBOOK(b.notebook)) > 1);
     update_window_title(b);
     refresh_status(b);
+    update_privacy_indicator(b);
 }
 
 void navigate_active(Browser& b, const std::string& entry_text) {
@@ -616,10 +625,19 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     b.reload_btn = gtk_button_new_from_icon_name("view-refresh-symbolic", GTK_ICON_SIZE_BUTTON);
     b.private_toggle = gtk_toggle_button_new_with_label("Private");
     gtk_widget_set_tooltip_text(b.private_toggle, "New tabs open in private mode");
+    b.privacy_btn = gtk_button_new();
+    GtkWidget* privacy_dot = gtk_label_new("\xE2\x97\x8F");
+    gtk_container_add(GTK_CONTAINER(b.privacy_btn), privacy_dot);
+    gtk_button_set_relief(GTK_BUTTON(b.privacy_btn), GTK_RELIEF_NONE);
+    gtk_widget_set_focus_on_click(b.privacy_btn, FALSE);
+    GtkStyleContext* dot_ctx = gtk_widget_get_style_context(privacy_dot);
+    gtk_style_context_add_class(dot_ctx, "kiwi-dot-idle");
+    gtk_widget_set_tooltip_text(b.privacy_btn, "Privacy Center — site overrides and stored data");
     b.url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(b.url_entry), "Search or enter address");
     b.status_label = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(b.status_label), 1.0f);
+    gtk_style_context_add_class(gtk_widget_get_style_context(b.status_label), "kiwi-status");
     gtk_widget_set_margin_start(b.status_label, 6);
     gtk_widget_set_margin_end(b.status_label, 6);
     gtk_widget_set_valign(b.status_label, GTK_ALIGN_CENTER);
@@ -644,6 +662,7 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_box_pack_start(GTK_BOX(toolbar), b.forward_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b.reload_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b.private_toggle, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(toolbar), b.privacy_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b.url_entry, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), b.downloads_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(toolbar), new_tab_btn, FALSE, FALSE, 0);
@@ -662,6 +681,7 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     g_signal_connect(b.forward_btn, "clicked", G_CALLBACK(on_go_forward), nullptr);
     g_signal_connect(b.reload_btn, "clicked", G_CALLBACK(on_reload), nullptr);
     g_signal_connect(b.private_toggle, "toggled", G_CALLBACK(on_private_toggled), nullptr);
+    g_signal_connect(b.privacy_btn, "clicked", G_CALLBACK(on_privacy_clicked), nullptr);
     g_signal_connect(new_tab_btn, "clicked", G_CALLBACK(on_new_tab), nullptr);
     g_signal_connect(b.downloads_btn, "clicked", G_CALLBACK(on_downloads_clicked), nullptr);
     g_signal_connect(b.url_entry, "activate", G_CALLBACK(on_url_activate), nullptr);

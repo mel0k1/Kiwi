@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kiwi
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "Privacy-first web browser powered by the Mustela engine"
     LANGUAGES CXX)
 
@@ -37,6 +37,8 @@ target_include_directories(kiwi PRIVATE
     src
     ${MUSTELA_ROOT}/include
     ${GTK_INCLUDE_DIRS})
+target_compile_definitions(kiwi PRIVATE
+    KIWI_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
 target_link_directories(kiwi PRIVATE ${GTK_LIBRARY_DIRS} ${MUSTELA_BUILD_DIR})
 target_link_libraries(kiwi PRIVATE
     ${MUSTELA_LINK_LIBS}
