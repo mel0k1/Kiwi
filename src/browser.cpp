@@ -253,6 +253,7 @@ void record_history(Browser& b, KiwiTab* tab) {
 void on_switch_page(GtkNotebook*, GtkWidget*, guint, gpointer) {
     gtk_entry_set_progress_fraction(GTK_ENTRY(browser->url_entry), 0.0);
     browser->hover_link.clear();
+    toggle_find_bar(*browser, false);
     refresh_chrome(*browser);
 }
 
@@ -314,6 +315,38 @@ void on_settings_clicked(GtkButton*, gpointer) {
     open_settings_window(*browser);
 }
 
+void on_find_changed(GtkSearchEntry*, gpointer) {
+    Browser& b = *browser;
+    b.find_query = gtk_entry_get_text(GTK_ENTRY(b.find_entry));
+    KiwiTab* tab = active_tab(b);
+    if (!tab) return;
+    if (b.find_query.empty()) {
+        tab->view->find_finish();
+        gtk_label_set_text(GTK_LABEL(b.find_hint), "");
+    } else {
+        tab->view->find(b.find_query);
+    }
+}
+
+void on_find_activate(GtkEntry*, gpointer) {
+    KiwiTab* tab = active_tab(*browser);
+    if (tab && !browser->find_query.empty()) tab->view->find_next();
+}
+
+void on_find_next_clicked(GtkButton*, gpointer) {
+    KiwiTab* tab = active_tab(*browser);
+    if (tab && !browser->find_query.empty()) tab->view->find_next();
+}
+
+void on_find_previous_clicked(GtkButton*, gpointer) {
+    KiwiTab* tab = active_tab(*browser);
+    if (tab && !browser->find_query.empty()) tab->view->find_previous();
+}
+
+void on_find_stop(GtkSearchEntry*, gpointer) {
+    toggle_find_bar(*browser, false);
+}
+
 void on_privacy_clicked(GtkButton*, gpointer) {
     if (!browser) return;
     std::string host;
@@ -341,6 +374,22 @@ gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer) {
     }
     if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_l) {
         gtk_widget_grab_focus(b.url_entry);
+        return TRUE;
+    }
+    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_f) {
+        toggle_find_bar(b, true);
+        return TRUE;
+    }
+    if (mods == 0 && event->keyval == GDK_KEY_F3) {
+        if (tab && !b.find_query.empty()) tab->view->find_next();
+        return TRUE;
+    }
+    if (mods == GDK_SHIFT_MASK && event->keyval == GDK_KEY_F3) {
+        if (tab && !b.find_query.empty()) tab->view->find_previous();
+        return TRUE;
+    }
+    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && event->keyval == GDK_KEY_I) {
+        toggle_devtools(b);
         return TRUE;
     }
     if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_h) {
@@ -423,6 +472,33 @@ void flash_status(Browser& b, const std::string& text) {
     g_timeout_add_seconds(3, restore_status, nullptr);
 }
 
+void toggle_find_bar(Browser& b, bool show) {
+    if (!b.find_bar) return;
+    if (show) {
+        if (!gtk_widget_get_visible(b.find_bar)) gtk_widget_show_all(b.find_bar);
+        gtk_label_set_text(GTK_LABEL(b.find_hint), "");
+        std::string query = gtk_entry_get_text(GTK_ENTRY(b.find_entry));
+        b.find_query = query;
+        gtk_widget_grab_focus(b.find_entry);
+        KiwiTab* tab = active_tab(b);
+        if (tab && !query.empty()) tab->view->find(query);
+        return;
+    }
+    if (!gtk_widget_get_visible(b.find_bar)) return;
+    KiwiTab* tab = active_tab(b);
+    if (tab) tab->view->find_finish();
+    b.find_query.clear();
+    gtk_label_set_text(GTK_LABEL(b.find_hint), "");
+    gtk_widget_hide(b.find_bar);
+}
+
+void toggle_devtools(Browser& b) {
+    KiwiTab* tab = active_tab(b);
+    if (!tab) return;
+    if (tab->view->devtools_attached()) tab->view->hide_devtools();
+    else tab->view->show_devtools();
+}
+
 KiwiTab* active_tab(Browser& b) {
     gint page = gtk_notebook_get_current_page(GTK_NOTEBOOK(b.notebook));
     if (page < 0 || page >= static_cast<gint>(b.tabs.size())) return nullptr;
@@ -457,6 +533,7 @@ void navigate_active(Browser& b, const std::string& entry_text) {
 void close_tab(Browser& b, KiwiTab* tab) {
     gint idx = tab_index(b, tab);
     if (idx < 0) return;
+    if (tab == active_tab(b)) toggle_find_bar(b, false);
     gtk_notebook_remove_page(GTK_NOTEBOOK(b.notebook), idx);
     b.tabs.erase(b.tabs.begin() + idx);
     if (b.tabs.empty()) {
@@ -544,6 +621,18 @@ mustela::ViewCallbacks make_tab_callbacks(Browser* b, KiwiTab* tab) {
     };
     cb.close_requested = [b, tab]() {
         close_tab(*b, tab);
+    };
+    cb.context_menu = [b](const mustela::ContextMenuInfo& info) {
+        open_context_menu(*b, info);
+        return true;
+    };
+    cb.find_result = [b](bool found) {
+        if (b->find_hint && b->find_bar && gtk_widget_get_visible(b->find_bar)) {
+            gtk_label_set_text(GTK_LABEL(b->find_hint), found ? "found" : "no matches");
+        }
+    };
+    cb.devtools_docked = [b](bool docked) {
+        flash_status(*b, docked ? "devtools docked — Ctrl+Shift+I to hide" : "devtools hidden");
     };
     return cb;
 }
@@ -669,7 +758,7 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_widget_set_valign(b.status_label, GTK_ALIGN_CENTER);
     gtk_widget_set_tooltip_text(b.status_label,
         "Cookie policy, tracking prevention and fingerprint budget. "
-        "Ctrl+D bookmark, Ctrl+Shift+O bookmarks, Ctrl+H history, Ctrl+J downloads");
+        "Ctrl+F find, Ctrl+D bookmark, Ctrl+Shift+O bookmarks, Ctrl+H history, Ctrl+J downloads");
     GtkWidget* new_tab_btn = gtk_button_new_from_icon_name("tab-new-symbolic", GTK_ICON_SIZE_BUTTON);
     b.downloads_btn = gtk_button_new_from_icon_name("document-save-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_button_set_relief(GTK_BUTTON(b.downloads_btn), GTK_RELIEF_NONE);
@@ -679,6 +768,35 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_button_set_relief(GTK_BUTTON(b.settings_btn), GTK_RELIEF_NONE);
     gtk_widget_set_focus_on_click(b.settings_btn, FALSE);
     gtk_widget_set_tooltip_text(b.settings_btn, "Settings — search engines and profiles (Ctrl+,)");
+
+    b.find_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    gtk_widget_set_no_show_all(b.find_bar, TRUE);
+    gtk_container_set_border_width(GTK_CONTAINER(b.find_bar), 2);
+    gtk_style_context_add_class(gtk_widget_get_style_context(b.find_bar), "kiwi-findbar");
+    GtkWidget* find_icon = gtk_image_new_from_icon_name("edit-find-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_margin_start(find_icon, 4);
+    b.find_entry = gtk_search_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(b.find_entry), "Find in page");
+    gtk_widget_set_size_request(b.find_entry, 260, -1);
+    b.find_hint = gtk_label_new("");
+    gtk_style_context_add_class(gtk_widget_get_style_context(b.find_hint), "kiwi-secondary");
+    GtkWidget* find_prev_btn = gtk_button_new_from_icon_name("go-up-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(find_prev_btn, "Previous match (Shift+F3)");
+    GtkWidget* find_next_btn = gtk_button_new_from_icon_name("go-down-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(find_next_btn, "Next match (F3 or Enter)");
+    GtkWidget* find_close_btn = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(find_close_btn, "Close find bar (Esc)");
+    GtkWidget* find_buttons[] = {find_prev_btn, find_next_btn, find_close_btn};
+    for (GtkWidget* btn : find_buttons) {
+        gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
+        gtk_widget_set_focus_on_click(btn, FALSE);
+    }
+    gtk_box_pack_start(GTK_BOX(b.find_bar), find_icon, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(b.find_bar), b.find_entry, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(b.find_bar), b.find_hint, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(b.find_bar), find_prev_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(b.find_bar), find_next_btn, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(b.find_bar), find_close_btn, FALSE, FALSE, 0);
 
     GtkWidget* toolbar_buttons[] = {b.back_btn, b.forward_btn, b.reload_btn, new_tab_btn};
     for (GtkWidget* btn : toolbar_buttons) {
@@ -706,6 +824,7 @@ void build_browser_ui(Browser& b, const char* startup_url) {
 
     GtkWidget* layout = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_box_pack_start(GTK_BOX(layout), toolbar, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(layout), b.find_bar, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(layout), b.notebook, TRUE, TRUE, 0);
     gtk_container_add(GTK_CONTAINER(window), layout);
 
@@ -717,6 +836,12 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     g_signal_connect(new_tab_btn, "clicked", G_CALLBACK(on_new_tab), nullptr);
     g_signal_connect(b.downloads_btn, "clicked", G_CALLBACK(on_downloads_clicked), nullptr);
     g_signal_connect(b.settings_btn, "clicked", G_CALLBACK(on_settings_clicked), nullptr);
+    g_signal_connect(b.find_entry, "search-changed", G_CALLBACK(on_find_changed), nullptr);
+    g_signal_connect(b.find_entry, "activate", G_CALLBACK(on_find_activate), nullptr);
+    g_signal_connect(b.find_entry, "stop-search", G_CALLBACK(on_find_stop), nullptr);
+    g_signal_connect(find_next_btn, "clicked", G_CALLBACK(on_find_next_clicked), nullptr);
+    g_signal_connect(find_prev_btn, "clicked", G_CALLBACK(on_find_previous_clicked), nullptr);
+    g_signal_connect(find_close_btn, "clicked", G_CALLBACK(on_find_stop), nullptr);
     g_signal_connect(b.url_entry, "activate", G_CALLBACK(on_url_activate), nullptr);
     g_signal_connect(b.notebook, "switch-page", G_CALLBACK(on_switch_page), nullptr);
     g_signal_connect(b.notebook, "page-removed", G_CALLBACK(on_page_removed), nullptr);

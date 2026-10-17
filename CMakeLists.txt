@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kiwi
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "Privacy-first web browser powered by the Mustela engine"
     LANGUAGES CXX)
 
@@ -32,7 +32,8 @@ add_executable(kiwi
     src/main.cpp
     src/browser.cpp
     src/screens.cpp
-    src/prefs.cpp)
+    src/prefs.cpp
+    src/context_menu.cpp)
 
 target_include_directories(kiwi PRIVATE
     src

@@ -49,6 +49,10 @@ struct Browser {
     GtkWidget* status_label = nullptr;
     GtkWidget* downloads_btn = nullptr;
     GtkWidget* settings_btn = nullptr;
+    GtkWidget* find_bar = nullptr;
+    GtkWidget* find_entry = nullptr;
+    GtkWidget* find_hint = nullptr;
+    std::string find_query;
     GtkWidget* history_window = nullptr;
     GtkWidget* downloads_window = nullptr;
     GtkWidget* privacy_window = nullptr;
@@ -81,3 +85,6 @@ void refresh_bookmarks_window(Browser& b);
 void update_bookmark_star(Browser& b);
 void toggle_bookmark(Browser& b);
 void open_settings_window(Browser& b);
+void toggle_find_bar(Browser& b, bool show);
+void toggle_devtools(Browser& b);
+void open_context_menu(Browser& b, const mustela::ContextMenuInfo& info);

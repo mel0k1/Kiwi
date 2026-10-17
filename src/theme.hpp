@@ -147,6 +147,29 @@ treeview header button {
   font-size: 90%;
 }
 
+.kiwi-findbar {
+  background-color: #FFF5F0;
+  border-bottom: 1px solid #EDBB99;
+}
+
+menu.kiwi-menu {
+  background-color: #FFF5F0;
+  border: 1px solid #EDBB99;
+  border-radius: 8px;
+  padding: 2px 0;
+}
+menu.kiwi-menu menuitem {
+  background-color: transparent;
+  border-radius: 4px;
+  padding: 3px 8px;
+  margin: 0 2px;
+  color: #2C3E50;
+  min-height: 18px;
+}
+menu.kiwi-menu menuitem:hover { background-color: #FADBD8; }
+menu.kiwi-menu menuitem:disabled { color: #85929E; }
+menu.kiwi-menu separator { margin: 2px 8px; background-color: #EDBB99; min-height: 1px; }
+
 scrollbar {
   background-color: #FFF5F0;
 }
