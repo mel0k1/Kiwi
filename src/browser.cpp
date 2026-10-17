@@ -230,6 +230,85 @@ GtkWidget* build_tab_label(Browser&, KiwiTab* tab) {
     return box;
 }
 
+enum TabDropTarget {
+    TAB_DROP_URI_LIST = 1001,
+    TAB_DROP_TEXT = 1002
+};
+
+std::string drop_url_from_selection(GtkSelectionData* data, guint info) {
+    const guchar* raw = gtk_selection_data_get_data(data);
+    gint len = gtk_selection_data_get_length(data);
+    if (!raw || len <= 0) return std::string();
+    std::string text(reinterpret_cast<const char*>(raw), static_cast<size_t>(len));
+    if (info == TAB_DROP_URI_LIST) {
+        size_t end = text.find_first_of("\r\n");
+        if (end != std::string::npos) text = text.substr(0, end);
+        if (text.rfind("http://", 0) == 0 || text.rfind("https://", 0) == 0
+            || text.rfind("file://", 0) == 0 || text.rfind("about:", 0) == 0) {
+            return text;
+        }
+        return std::string();
+    }
+    std::string trimmed = mustela::sanitize_dialog_text(text, 2048);
+    size_t start = trimmed.find_first_not_of(" \t");
+    if (start == std::string::npos) return std::string();
+    trimmed = trimmed.substr(start);
+    size_t finish = trimmed.find_last_not_of(" \t\r\n");
+    if (finish != std::string::npos) trimmed = trimmed.substr(0, finish + 1);
+    if (trimmed.rfind("http://", 0) == 0 || trimmed.rfind("https://", 0) == 0
+        || trimmed.rfind("file://", 0) == 0) {
+        return trimmed;
+    }
+    return std::string();
+}
+
+void on_tab_label_data_received(GtkWidget*, GdkDragContext* context, gint, gint,
+    GtkSelectionData* data, guint info, guint time, gpointer user_data) {
+    KiwiTab* tab = static_cast<KiwiTab*>(user_data);
+    GtkWidget* label = tab ? tab->label : nullptr;
+    GtkWidget* source = gtk_drag_get_source_widget(context);
+    if (!tab || !browser || (source && source == label)) {
+        gtk_drag_finish(context, FALSE, FALSE, time);
+        return;
+    }
+    std::string url = drop_url_from_selection(data, info);
+    if (url.empty()) {
+        gtk_drag_finish(context, FALSE, FALSE, time);
+        return;
+    }
+    tab->view->load_url(url);
+    refresh_chrome(*browser);
+    gtk_drag_finish(context, TRUE, FALSE, time);
+}
+
+gboolean on_tab_label_drag_drop(GtkWidget* label, GdkDragContext* context, gint, gint,
+    guint time, gpointer) {
+    GtkTargetList* targets = gtk_drag_dest_get_target_list(label);
+    GdkAtom target = gtk_drag_dest_find_target(label, context, targets);
+    if (target == GDK_NONE) {
+        gtk_drag_finish(context, FALSE, FALSE, time);
+        return TRUE;
+    }
+    gtk_drag_get_data(label, context, target, time);
+    return TRUE;
+}
+
+void wire_tab_drops(KiwiTab* tab) {
+    if (!tab || !tab->label) return;
+    GtkWidget* label = tab->label;
+    GtkTargetList* list = gtk_drag_dest_get_target_list(label);
+    if (!list) {
+        list = gtk_target_list_new(nullptr, 0);
+        gtk_drag_dest_set_target_list(label, list);
+        gtk_target_list_unref(list);
+    }
+    gtk_target_list_add(list, gdk_atom_intern("text/uri-list", FALSE), 0, TAB_DROP_URI_LIST);
+    gtk_target_list_add(list, gdk_atom_intern("UTF8_STRING", FALSE), 0, TAB_DROP_TEXT);
+    gtk_target_list_add(list, gdk_atom_intern("text/plain;charset=utf-8", FALSE), 0, TAB_DROP_TEXT);
+    g_signal_connect(label, "drag-drop", G_CALLBACK(on_tab_label_drag_drop), tab);
+    g_signal_connect(label, "drag-data-received", G_CALLBACK(on_tab_label_data_received), tab);
+}
+
 void update_window_title(Browser& b) {
     KiwiTab* tab = active_tab(b);
     if (!tab) {
@@ -720,6 +799,7 @@ KiwiTab* open_tab(Browser& b, const std::string& url, bool force_private) {
     GtkWidget* widget = static_cast<GtkWidget*>(tab->view->native_widget());
     gint idx = gtk_notebook_append_page(GTK_NOTEBOOK(b.notebook), widget, tab->label);
     gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(b.notebook), widget, TRUE);
+    wire_tab_drops(tab);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(b.notebook), idx);
     gtk_widget_show(widget);
 
