@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.mel0k1.Kiwi</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LGPL-2.1-or-later</project_license>
+  <name>Kiwi</name>
+  <summary>Privacy-first web browser powered by the Mustela engine</summary>
+  <description>
+    <p>
+      Kiwi is a small privacy-first browser built on the Mustela engine (WebKitGTK):
+      tracking domains are refused through a local proxy with DoH, fingerprint surfaces
+      are switches instead of promises, and every site can carry its own rules for
+      JavaScript, cookies, fingerprinting, permissions and dressing.
+    </p>
+    <p>
+      The interface is a deliberate Material Design 3 pastel-peach theme: solid fills,
+      1px outlines, no gradients, no shadows, no blur.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.mel0k1.Kiwi.desktop</launchable>
+  <url type="homepage">https://github.com/mel0k1/Kiwi</url>
+  <url type="bugtracker">https://github.com/mel0k1/Kiwi/issues</url>
+  <developer_name>mel0k1</developer_name>
+  <update_contact>218306052+mel0k1@users.noreply.github.com</update_contact>
+  <content_rating type="oars-1.1" />
+  <provides>
+    <binary>kiwi</binary>
+  </provides>
+  <releases>
+    <release version="0.5.0" date="2026-10-17">
+      <description>
+        <p>Check-for-updates button in Settings — on-demand check against GitHub Releases with a platform asset picker and download progress; packaging: deb, Flatpak and a Windows portable build.</p>
+      </description>
+    </release>
+    <release version="0.4.0" date="2026-10-16">
+      <description>
+        <p>View slice 2 UI: find bar, MD3 context menu, devtools toggle.</p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2026-10-16">
+      <description>
+        <p>Bookmarks manager, search engines editor with !keyword shortcuts, profile manager.</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2026-10-16">
+      <description>
+        <p>Privacy center: per-site override editor with a live toolbar indicator and stored-data management screens.</p>
+      </description>
+    </release>
+  </releases>
+</component>

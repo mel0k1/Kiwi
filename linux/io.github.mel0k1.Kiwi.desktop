@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Kiwi
+GenericName=Web Browser
+Comment=Privacy-first web browser powered by the Mustela engine
+Exec=kiwi %U
+Icon=io.github.mel0k1.Kiwi
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;text/plain;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=Kiwi

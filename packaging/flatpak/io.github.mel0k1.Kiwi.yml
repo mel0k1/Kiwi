@@ -1,0 +1,46 @@
+app-id: io.github.mel0k1.Kiwi
+runtime: org.gnome.Platform
+runtime-version: "48"
+sdk: org.gnome.Sdk
+command: kiwi
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --device=dri
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --socket=cups
+  - --filesystem=xdg-download
+  - --talk-name=org.freedesktop.Notifications
+  - --env=WEBKIT_DISABLE_COMPOSITING_MODE=1
+cleanup:
+  - /include
+  - /lib/cmake
+  - /lib/pkgconfig
+  - /share/man
+modules:
+  - name: mustela
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DMUSTELA_BUILD_SHELL=OFF
+      - -DMUSTELA_BUILD_TESTS=OFF
+      - -DMUSTELA_BUILD_BENCH=OFF
+      - -DMUSTELA_BUILD_VIEW=ON
+      - -DMUSTELA_WEBEXT_DIR=/app/lib/mustela/webext
+    sources:
+      - type: git
+        url: https://github.com/mel0k1/Mustela.git
+        tag: v0.22.0
+  - name: kiwi
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DKIWI_MUSTELA_INSTALLED=ON
+    sources:
+      - type: git
+        url: https://github.com/mel0k1/Kiwi.git
+        branch: main

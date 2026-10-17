@@ -33,11 +33,13 @@ Milestones are capability-based; dates are intentionally not assigned.
 - MD3 context menu built from the engine's `ContextMenuInfo` hit-test flags: navigation, open link/image in a new tab, copy link/image address, copy/cut/paste/select-all through `View::execute_edit_command`, "Search with …" fetching the page selection through the engine's `selected_text` bridge and the default engine, "Inspect element". Returning true from the engine callback suppresses the stock menu. (done)
 - Devtools toggle (Ctrl+Shift+I) over `View::show_devtools`/`hide_devtools`/`devtools_attached`, with the dock-state callback flashing the status bar. (done)
 
-## K4 — Packaging
+## K4 — Packaging (done, 0.5.0)
 
-- Linux: deb, rpm, Flatpak.
-- Windows: installer and portable zip.
-- Update story without silent traffic.
+- Check for updates: an "About & updates" page in Settings with a manual "Check for updates" button — an on-demand query against the GitHub Releases API (libsoup, worker thread, progress in the same row), a platform asset picker (amd64 deb on Linux, exe/zip on Windows), semver comparison against the baked `KIWI_VERSION`, release notes preview, and a download into the user's Downloads directory with a "Show in folder" action. No background traffic, ever — the check happens only when the user presses the button. (done)
+- Linux deb: install rules for the binary, the hicolor icon, the `.desktop` file and the AppStream metainfo; CPack DEB with shlib-deps-generated runtime dependencies (GTK, WebKitGTK, libsoup); the engine's web-extension module ships inside the package when built from a Mustela checkout. (done)
+- Flatpak: `packaging/flatpak/io.github.mel0k1.Kiwi.yml` builds the engine (v0.22.0, view library on, web extension into `/app/lib/mustela/webext`) and Kiwi against the installed engine export targets on the GNOME 48 runtime; finish-args cover network, GPU, sockets, downloads and notifications. (done)
+- Windows: an MSYS2 MinGW64 CI track builds the engine and Kiwi against `webkit2gtk-4.1`, collects the runtime DLLs and WebKit helper processes via `ntldd` into a portable ZIP with a launcher script. (done, portable ZIP — an NSIS installer stays open)
+- Release channel: a tag-triggered job attaches the deb, the Flatpak bundle and the Windows ZIP to the GitHub Release, which is exactly what the update checker reads. (done)
 
 ## K5 — Identity
 

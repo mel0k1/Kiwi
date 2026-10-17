@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "mustela/mustela.hpp"
+#include "updater.hpp"
 
 // ---------------- Settings (K3): search engines + profiles ----------------
 
@@ -35,6 +36,11 @@ struct PrefsPage {
     GtkWidget* engines_tree = nullptr;
     GtkListStore* profiles_store = nullptr;
     GtkWidget* profiles_tree = nullptr;
+    GtkWidget* updates_status = nullptr;
+    GtkWidget* updates_notes = nullptr;
+    GtkWidget* updates_check_btn = nullptr;
+    GtkWidget* updates_download_btn = nullptr;
+    GtkWidget* updates_open_btn = nullptr;
 };
 
 PrefsPage g_prefs;
@@ -558,7 +564,146 @@ GtkWidget* build_profiles_page(Browser&) {
     return page;
 }
 
+// ---- updates page (K4: check for updates against GitHub Releases) ----
+
+void on_updates_check_clicked(GtkButton*, gpointer) {
+    if (g_prefs.b) kiwi::updates_check(g_prefs.b);
 }
+
+void on_updates_download_clicked(GtkButton*, gpointer) {
+    if (g_prefs.b) kiwi::updates_download(g_prefs.b);
+}
+
+void on_updates_open_clicked(GtkButton*, gpointer) {
+    if (g_prefs.b) kiwi::updates_open_folder(g_prefs.b);
+}
+
+std::string updates_status_text() {
+    const kiwi::UpdateInfo& u = kiwi::updates();
+    if (u.busy) {
+        return "Downloading update… " + std::to_string(u.percent.load()) + "%";
+    }
+    if (u.checking) return "Checking GitHub Releases…";
+    if (!u.error.empty()) return "Update check failed: " + u.error;
+    if (u.available) {
+        std::string line = "Version " + u.latest_version + " is available";
+        if (!u.asset_name.empty()) line += " — " + u.asset_name;
+        if (!u.downloaded_path.empty()) line += "\nSaved to " + u.downloaded_path;
+        return line;
+    }
+    if (u.up_to_date) return "You are up to date (Kiwi " + u.current_version + ")";
+    if (!u.downloaded_path.empty()) return "Saved to " + u.downloaded_path;
+    return "Kiwi " + u.current_version + " — releases live on GitHub";
+}
+
+void refresh_updates_widgets() {
+    const kiwi::UpdateInfo& u = kiwi::updates();
+    if (g_prefs.updates_status) {
+        gtk_label_set_text(GTK_LABEL(g_prefs.updates_status), updates_status_text().c_str());
+        gtk_label_set_line_wrap(GTK_LABEL(g_prefs.updates_status), TRUE);
+    }
+    if (g_prefs.updates_notes) {
+        std::string notes = u.notes;
+        if (!u.release_url.empty() && notes.size() > 400) notes = notes.substr(0, 400) + "…";
+        gtk_label_set_text(GTK_LABEL(g_prefs.updates_notes), notes.c_str());
+        gtk_widget_set_visible(g_prefs.updates_notes, !notes.empty());
+    }
+    if (g_prefs.updates_check_btn) {
+        gtk_widget_set_sensitive(g_prefs.updates_check_btn, !u.checking && !u.busy);
+    }
+    if (g_prefs.updates_download_btn) {
+        gtk_widget_set_sensitive(g_prefs.updates_download_btn, u.available && !u.busy);
+        gtk_widget_set_visible(g_prefs.updates_download_btn, u.available);
+    }
+    if (g_prefs.updates_open_btn) {
+        gtk_widget_set_sensitive(g_prefs.updates_open_btn, !u.downloaded_path.empty());
+    }
+}
+
+GtkWidget* build_updates_page(Browser& b) {
+    (void)b;
+    GtkWidget* page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_container_set_border_width(GTK_CONTAINER(page), 12);
+
+    GtkWidget* title = gtk_label_new(nullptr);
+    std::string markup = std::string("<span size=\"x-large\" weight=\"bold\">Kiwi ")
+        + KIWI_VERSION + "</span>";
+    gtk_label_set_markup(GTK_LABEL(title), markup.c_str());
+    gtk_box_pack_start(GTK_BOX(page), title, FALSE, FALSE, 0);
+
+    GtkWidget* subtitle = gtk_label_new("Privacy-first web browser powered by the Mustela engine");
+    gtk_style_context_add_class(gtk_widget_get_style_context(subtitle), "kiwi-secondary");
+    gtk_box_pack_start(GTK_BOX(page), subtitle, FALSE, FALSE, 0);
+
+    GtkWidget* sep1 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_pack_start(GTK_BOX(page), sep1, FALSE, FALSE, 4);
+
+    GtkWidget* updates_title = gtk_label_new(nullptr);
+    gtk_label_set_markup(GTK_LABEL(updates_title),
+        "<span weight=\"bold\">Updates</span>");
+    gtk_label_set_xalign(GTK_LABEL(updates_title), 0.0f);
+    gtk_box_pack_start(GTK_BOX(page), updates_title, FALSE, FALSE, 0);
+
+    GtkWidget* status = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(status), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(status), 0.0f);
+    gtk_label_set_selectable(GTK_LABEL(status), TRUE);
+    g_prefs.updates_status = status;
+    gtk_box_pack_start(GTK_BOX(page), status, FALSE, FALSE, 0);
+
+    GtkWidget* notes = gtk_label_new("");
+    gtk_label_set_line_wrap(GTK_LABEL(notes), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(notes), 0.0f);
+    gtk_label_set_selectable(GTK_LABEL(notes), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(notes), 72);
+    gtk_widget_set_no_show_all(notes, TRUE);
+    g_prefs.updates_notes = notes;
+    gtk_box_pack_start(GTK_BOX(page), notes, FALSE, FALSE, 0);
+
+    GtkWidget* buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    GtkWidget* check_btn = gtk_button_new_with_label("Check for updates");
+    gtk_style_context_add_class(gtk_widget_get_style_context(check_btn), "kiwi-accent");
+    GtkWidget* download_btn = gtk_button_new_with_label("Download update");
+    GtkWidget* open_btn = gtk_button_new_with_label("Show in folder");
+    g_signal_connect(check_btn, "clicked", G_CALLBACK(on_updates_check_clicked), nullptr);
+    g_signal_connect(download_btn, "clicked", G_CALLBACK(on_updates_download_clicked), nullptr);
+    g_signal_connect(open_btn, "clicked", G_CALLBACK(on_updates_open_clicked), nullptr);
+    gtk_box_pack_start(GTK_BOX(buttons), check_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons), download_btn, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(buttons), open_btn, FALSE, FALSE, 0);
+    g_prefs.updates_check_btn = check_btn;
+    g_prefs.updates_download_btn = download_btn;
+    g_prefs.updates_open_btn = open_btn;
+    gtk_box_pack_start(GTK_BOX(page), buttons, FALSE, FALSE, 0);
+
+    GtkWidget* hint = gtk_label_new(
+        "Checks happen only when you press the button — Kiwi never calls home in the background. "
+        "Update packages are downloaded from the Kiwi GitHub Releases page.");
+    gtk_style_context_add_class(gtk_widget_get_style_context(hint), "kiwi-secondary");
+    gtk_label_set_line_wrap(GTK_LABEL(hint), TRUE);
+    gtk_label_set_xalign(GTK_LABEL(hint), 0.0f);
+    gtk_box_pack_start(GTK_BOX(page), hint, FALSE, FALSE, 4);
+
+    refresh_updates_widgets();
+    return page;
+}
+
+}
+
+namespace kiwi {
+
+bool updates_ui_bound() {
+    return g_prefs.b != nullptr && g_prefs.updates_status != nullptr;
+}
+
+void updates_refresh_ui(Browser* b) {
+    (void)b;
+    if (g_prefs.b && g_prefs.updates_status) refresh_updates_widgets();
+}
+
+}
+
+namespace {
 
 void open_settings_window(Browser& b) {
     if (b.settings_window) {
@@ -582,10 +727,14 @@ void open_settings_window(Browser& b) {
         gtk_label_new("Search engines"));
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_profiles_page(b),
         gtk_label_new("Profiles"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(notebook), build_updates_page(b),
+        gtk_label_new("About & updates"));
 
     gtk_container_add(GTK_CONTAINER(window), notebook);
     gtk_widget_show_all(window);
     refresh_engines_list();
     refresh_profiles_list();
     gtk_notebook_set_current_page(GTK_NOTEBOOK(notebook), 0);
+}
+
 }
