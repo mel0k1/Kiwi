@@ -21,6 +21,13 @@ endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED gtk+-3.0)
 
+if(EXISTS "${MUSTELA_BUILD_DIR}/mustela-targets.cmake")
+    include("${MUSTELA_BUILD_DIR}/mustela-targets.cmake")
+    set(MUSTELA_LINK_LIBS mustela::mustela_view_gtk mustela::mustela_core)
+else()
+    set(MUSTELA_LINK_LIBS mustela_view_gtk mustela_core)
+endif()
+
 add_executable(kiwi
     src/main.cpp
     src/browser.cpp
@@ -32,8 +39,7 @@ target_include_directories(kiwi PRIVATE
     ${GTK_INCLUDE_DIRS})
 target_link_directories(kiwi PRIVATE ${GTK_LIBRARY_DIRS} ${MUSTELA_BUILD_DIR})
 target_link_libraries(kiwi PRIVATE
-    mustela_view_gtk
-    mustela_core
+    ${MUSTELA_LINK_LIBS}
     ${GTK_LIBRARIES})
 target_compile_options(kiwi PRIVATE ${GTK_CFLAGS_OTHER})
 
