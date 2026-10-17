@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kiwi
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "Privacy-first web browser powered by the Mustela engine"
     LANGUAGES CXX)
 
@@ -92,9 +92,11 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS kiwi RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES assets/logo.png
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps
-    RENAME io.github.mel0k1.Kiwi.png)
+set(KIWI_ICON_SIZES 16 22 24 32 48 64 128 256)
+foreach(size IN LISTS KIWI_ICON_SIZES)
+    install(FILES "assets/icons/hicolor/${size}x${size}/apps/io.github.mel0k1.Kiwi.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps")
+endforeach()
 install(FILES linux/io.github.mel0k1.Kiwi.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES linux/io.github.mel0k1.Kiwi.metainfo.xml

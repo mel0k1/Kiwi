@@ -18,7 +18,7 @@
     </p>
   </description>
   <launchable type="desktop-id">io.github.mel0k1.Kiwi.desktop</launchable>
-  <url type="homepage">https://github.com/mel0k1/Kiwi</url>
+  <url type="homepage">https://mel0k1.github.io/Kiwi/</url>
   <url type="bugtracker">https://github.com/mel0k1/Kiwi/issues</url>
   <developer_name>mel0k1</developer_name>
   <update_contact>218306052+mel0k1@users.noreply.github.com</update_contact>
@@ -27,9 +27,16 @@
     <binary>kiwi</binary>
   </provides>
   <releases>
+    <release version="0.6.0" date="2026-10-18">
+      <description>
+        <p>Identity and platform dressing: full hicolor icon set, project website, page saving
+        as MHTML (Ctrl+S), HTML5 element fullscreen and web notifications surfaced through the
+        engine view API, F11 window fullscreen.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-17">
       <description>
-        <p>Check-for-updates button in Settings — on-demand check against GitHub Releases with a platform asset picker and download progress; packaging: deb, Flatpak and a Windows portable build.</p>
+        <p>Check-for-updates button in Settings — on-demand check against GitHub Releases with a platform asset picker and download progress; packaging: deb and Flatpak bundles attached to the release channel.</p>
       </description>
     </release>
     <release version="0.4.0" date="2026-10-16">

@@ -38,6 +38,8 @@ struct Browser {
     std::unique_ptr<mustela::HistoryStore> history;
     std::unique_ptr<mustela::BookmarkStore> bookmarks;
     std::unique_ptr<mustela::ViewSession> session;
+    GApplication* gapp = nullptr;
+    guint notification_seq = 0;
     GtkWidget* window = nullptr;
     GtkWidget* notebook = nullptr;
     GtkWidget* url_entry = nullptr;

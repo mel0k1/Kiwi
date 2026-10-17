@@ -355,6 +355,59 @@ void on_privacy_clicked(GtkButton*, gpointer) {
     open_privacy_window(*browser, host);
 }
 
+std::string downloads_start_dir(const Browser& b) {
+    if (!b.settings.downloads_dir.empty()) return b.settings.downloads_dir;
+    const gchar* downloads = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
+    return downloads ? std::string(downloads) : std::string(g_get_home_dir());
+}
+
+void save_page_as_mhtml(Browser& b) {
+    KiwiTab* tab = active_tab(b);
+    if (!tab || !tab->view || tab->uri.empty()) return;
+    std::string name = mustela::suggested_save_name(tab->title, tab->uri);
+    GtkWidget* chooser = gtk_file_chooser_dialog_new("Save page — Kiwi",
+        GTK_WINDOW(b.window), GTK_FILE_CHOOSER_ACTION_SAVE,
+        "Cancel", GTK_RESPONSE_CANCEL, "Save", GTK_RESPONSE_ACCEPT, nullptr);
+    gtk_file_chooser_set_do_overwrite_confirmation(GTK_FILE_CHOOSER(chooser), TRUE);
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(chooser), downloads_start_dir(b).c_str());
+    gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(chooser), name.c_str());
+    GtkFileFilter* filter = gtk_file_filter_new();
+    gtk_file_filter_set_name(filter, "Web page (MHTML)");
+    gtk_file_filter_add_pattern(filter, "*.mhtml");
+    gtk_file_filter_add_pattern(filter, "*.mht");
+    gtk_file_chooser_add_filter(GTK_FILE_CHOOSER(chooser), filter);
+    gint choice = gtk_dialog_run(GTK_DIALOG(chooser));
+    std::string path;
+    if (choice == GTK_RESPONSE_ACCEPT) {
+        gchar* chosen = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(chooser));
+        if (chosen) path = chosen;
+        g_free(chosen);
+    }
+    gtk_widget_destroy(chooser);
+    if (path.empty()) return;
+    std::string shown = path;
+    tab->view->save_mhtml(path, [&b, shown](bool ok) {
+        flash_status(b, ok ? "page saved to " + shown : std::string("page save failed"));
+    });
+}
+
+void show_kiwi_notification(Browser& b, const std::string& title, const std::string& body) {
+    if (!b.gapp) return;
+    std::string shown = title.empty() ? std::string("Kiwi") : title;
+    GNotification* item = g_notification_new(shown.c_str());
+    if (!body.empty()) g_notification_set_body(item, body.c_str());
+    std::string key = "kiwi-notification-" + std::to_string(++b.notification_seq);
+    g_application_send_notification(b.gapp, key.c_str(), item);
+    g_object_unref(item);
+}
+
+void toggle_window_fullscreen(Browser& b) {
+    if (!b.window || !gtk_widget_get_window(b.window)) return;
+    GdkWindowState state = gdk_window_get_state(gtk_widget_get_window(b.window));
+    if (state & GDK_WINDOW_STATE_FULLSCREEN) gtk_window_unfullscreen(GTK_WINDOW(b.window));
+    else gtk_window_fullscreen(GTK_WINDOW(b.window));
+}
+
 gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer) {
     Browser& b = *browser;
     GdkModifierType mods = static_cast<GdkModifierType>(event->state & gtk_accelerator_get_default_mod_mask());
@@ -445,6 +498,14 @@ gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer) {
     }
     if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_q) {
         gtk_widget_destroy(b.window);
+        return TRUE;
+    }
+    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_s) {
+        save_page_as_mhtml(b);
+        return TRUE;
+    }
+    if (mods == 0 && event->keyval == GDK_KEY_F11) {
+        toggle_window_fullscreen(b);
         return TRUE;
     }
     return FALSE;
@@ -634,6 +695,15 @@ mustela::ViewCallbacks make_tab_callbacks(Browser* b, KiwiTab* tab) {
     cb.devtools_docked = [b](bool docked) {
         flash_status(*b, docked ? "devtools docked — Ctrl+Shift+I to hide" : "devtools hidden");
     };
+    cb.enter_fullscreen = [b]() {
+        if (b->window) gtk_window_fullscreen(GTK_WINDOW(b->window));
+    };
+    cb.leave_fullscreen = [b]() {
+        if (b->window) gtk_window_unfullscreen(GTK_WINDOW(b->window));
+    };
+    cb.notification = [b](const std::string& title, const std::string& body) {
+        show_kiwi_notification(*b, title, body);
+    };
     return cb;
 }
 
@@ -758,7 +828,8 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_widget_set_valign(b.status_label, GTK_ALIGN_CENTER);
     gtk_widget_set_tooltip_text(b.status_label,
         "Cookie policy, tracking prevention and fingerprint budget. "
-        "Ctrl+F find, Ctrl+D bookmark, Ctrl+Shift+O bookmarks, Ctrl+H history, Ctrl+J downloads");
+        "Ctrl+F find, Ctrl+S save page, F11 fullscreen, Ctrl+D bookmark, "
+        "Ctrl+Shift+O bookmarks, Ctrl+H history, Ctrl+J downloads");
     GtkWidget* new_tab_btn = gtk_button_new_from_icon_name("tab-new-symbolic", GTK_ICON_SIZE_BUTTON);
     b.downloads_btn = gtk_button_new_from_icon_name("document-save-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_button_set_relief(GTK_BUTTON(b.downloads_btn), GTK_RELIEF_NONE);

@@ -5,7 +5,7 @@
 ![platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows-2f74c0)
 ![license](https://img.shields.io/badge/license-LGPL--2.1-e0a03d)
 ![engine](https://img.shields.io/badge/engine-Mustela-3a7d44)
-![status](https://img.shields.io/badge/status-0.5.0_packaging-d95f5f)
+![status](https://img.shields.io/badge/status-0.6.0_identity_platform-d95f5f)
 
 Privacy-first web browser powered by the [Mustela](https://github.com/mel0k1/Mustela) engine. The mascot is a kiwi bird: small, curious, and very private about its burrow.
 
@@ -22,13 +22,14 @@ Kiwi consumes Mustela through its public API only. No WebKit types above the eng
 
 ## Status
 
-Kiwi 0.5.0. Kiwi builds on Linux against the [Mustela](https://github.com/mel0k1/Mustela) engine: a GTK window with tabs (favicons, drag-reorderable), an address bar driven by the engine's entry pipeline (`resolve_entry` — keyword search shortcuts, URL passthrough), a privacy toggle, a privacy center, a bookmarks manager and a settings window. Every web view comes from the engine's view library (`include/mustela/view.hpp`, `libmustela_view_gtk`) — the privacy pipeline (cookies, ITP, fingerprint budget, tracker blocklist, GPC, per-site dressing), branded error pages, downloads, JS dialogs, permission prompts and popups all live below the UI boundary, and Kiwi itself links GTK without a single WebKit type.
+Kiwi 0.6.0. Kiwi builds on Linux against the [Mustela](https://github.com/mel0k1/Mustela) engine: a GTK window with tabs (favicons, drag-reorderable), an address bar driven by the engine's entry pipeline (`resolve_entry` — keyword search shortcuts, URL passthrough), a privacy toggle, a privacy center, a bookmarks manager and a settings window. Every web view comes from the engine's view library (`include/mustela/view.hpp`, `libmustela_view_gtk`) — the privacy pipeline (cookies, ITP, fingerprint budget, tracker blocklist, GPC, per-site dressing), branded error pages, downloads, JS dialogs, permission prompts and popups all live below the UI boundary, and Kiwi itself links GTK without a single WebKit type. The project website lives at [mel0k1.github.io/Kiwi](https://mel0k1.github.io/Kiwi/).
 
 - **K1 first flight (0.1.0)** — tabbed shell, engine-driven address bar, privacy toggle, history and downloads screens.
 - **K2 privacy center (0.2.0)** — per-site override editor with a live toolbar indicator, stored-data scan/clear screens, Material Design 3 peach theme.
 - **K3 library and settings (0.3.0)** — bookmarks manager (Ctrl+D star in the address bar, Ctrl+Shift+O manager), search engines editor (`!keyword` shortcuts, default engine), profile manager (per-profile data roots, restart-safe switching).
 - **View slice 2 UI (0.4.0)** — find-in-page bar over the engine's find controller (Ctrl+F, F3/Shift+F3, Esc closes, live hit/miss hint), an MD3 context menu (open link/image in a new tab, copy addresses, edit commands, "Search with …" over the default engine through the engine's selection bridge, inspect element), and a devtools toggle (Ctrl+Shift+I) docking the engine's inspector.
 - **Packaging and updates (0.5.0)** — a "Check for updates" button in Settings → About & updates: a strictly manual check against GitHub Releases (no background traffic), a platform asset picker, semver comparison, release notes and a download into the Downloads directory; a deb with install rules (icon, `.desktop`, AppStream metainfo, shlib-deps), a Flatpak manifest on the GNOME 48 runtime, and a tag-triggered release job that attaches both to the GitHub Release the updater reads. Windows stays an honest gap: MSYS2 removed the WebKitGTK packages, so there is no maintained Windows runtime to package against yet.
+- **Identity and platform dressing (0.6.0)** — the K5 milestone: a full freedesktop hicolor icon set generated from the mascot artwork (`scripts/make_icons.py`, 16–256 px), a Material-Design-3 pastel-peach project website deployed to GitHub Pages (`site/`, deployed by the `site` workflow), the AppStream homepage pointing at it, and the engine view slice 3 surfaced in the UI: page saving as MHTML (Ctrl+S, native save dialog, suggested name from the page title, status-bar confirmation), HTML5 element fullscreen requests fullscreen the Kiwi window (F11 toggles it manually), and web notifications render through `GNotification` on a registered `GApplication` (dropped quietly when no session bus exists).
 
 Build:
 

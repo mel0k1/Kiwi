@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kiwi — privacy-first web browser</title>
+<meta name="description" content="Kiwi is a small privacy-first browser built on the Mustela engine: tracking domains refused through a local proxy with DoH, per-site rules, Material Design 3 pastel-peach interface.">
+<style>
+  :root {
+    --surface: #FFF5F0;
+    --surface-variant: #FADBD8;
+    --primary: #E67E22;
+    --primary-soft: #E59866;
+    --on-primary: #FFFFFF;
+    --outline: #EDBB99;
+    --text: #2C3E50;
+    --text-secondary: #85929E;
+    --press: #F5CBA7;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--surface);
+    color: var(--text);
+    font-family: 'Segoe UI', 'Noto Sans', Roboto, Ubuntu, sans-serif;
+    line-height: 1.6;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { color: var(--primary-soft); }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; width: 100%; }
+  header { border-bottom: 1px solid var(--outline); background: var(--surface); }
+  .nav { display: flex; align-items: center; gap: 12px; padding: 14px 0; }
+  .nav img { width: 36px; height: 36px; }
+  .nav .name { font-size: 20px; font-weight: 600; }
+  .nav .links { margin-left: auto; display: flex; gap: 20px; font-size: 15px; }
+  .hero { display: flex; align-items: center; gap: 48px; padding: 64px 0 48px; flex-wrap: wrap; }
+  .hero img { width: 168px; height: 168px; border: 1px solid var(--outline); border-radius: 24px; background: #FFFFFF; padding: 12px; }
+  .hero h1 { font-size: 44px; font-weight: 700; line-height: 1.15; }
+  .hero p.tag { color: var(--text-secondary); font-size: 18px; margin: 12px 0 28px; max-width: 560px; }
+  .btn {
+    display: inline-block; padding: 12px 24px; border-radius: 8px;
+    border: 1px solid var(--outline); background: var(--surface);
+    color: var(--text); font-size: 16px; font-weight: 500; margin-right: 12px;
+  }
+  .btn:hover { background: var(--surface-variant); color: var(--text); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+  .btn.primary:hover { background: var(--primary-soft); border-color: var(--primary-soft); color: var(--on-primary); }
+  .btn:active { background: var(--press); }
+  section { padding: 32px 0; }
+  h2 { font-size: 24px; margin-bottom: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--outline);
+    border-radius: 8px; padding: 20px;
+  }
+  .card h3 { font-size: 17px; margin-bottom: 8px; color: var(--text); }
+  .card p { color: var(--text-secondary); font-size: 15px; }
+  .install { background: var(--surface-variant); border: 1px solid var(--outline); border-radius: 8px; padding: 20px; }
+  .install code {
+    display: block; background: var(--surface); border: 1px solid var(--outline);
+    border-radius: 8px; padding: 10px 14px; margin: 10px 0;
+    font-family: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace; font-size: 14px;
+    color: var(--text); overflow-x: auto; white-space: pre;
+  }
+  .install .note { color: var(--text-secondary); font-size: 14px; margin-top: 8px; }
+  footer { margin-top: auto; border-top: 1px solid var(--outline); }
+  footer .wrap { display: flex; gap: 20px; padding: 20px 24px; color: var(--text-secondary); font-size: 14px; flex-wrap: wrap; }
+  @media (max-width: 640px) { .hero { padding: 40px 0; } .hero h1 { font-size: 34px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <img src="logo.png" alt="Kiwi logo">
+    <span class="name">Kiwi</span>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/mel0k1/Kiwi">GitHub</a>
+      <a href="https://github.com/mel0k1/Kiwi/releases">Releases</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="hero">
+    <img src="logo.png" alt="Kiwi mascot">
+    <div>
+      <h1>Small browser,<br>serious privacy.</h1>
+      <p class="tag">Kiwi is a privacy-first web browser built on the Mustela engine (WebKitGTK).
+      Tracking domains are refused through a local proxy with DoH, fingerprint surfaces are
+      switches instead of promises, and every site can carry its own rules.</p>
+      <a class="btn primary" href="https://github.com/mel0k1/Kiwi/releases/latest">Download for Linux</a>
+      <a class="btn" href="https://github.com/mel0k1/Kiwi">View source</a>
+    </div>
+  </div>
+
+  <section id="features">
+    <h2>What Kiwi does</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>Local proxy network layer</h3>
+        <p>A loopback proxy inside the engine enforces the tracking blocklist at connection
+        level, resolves names through DNS-over-HTTPS (fail-closed) and chains upstream
+        proxies when configured.</p>
+      </div>
+      <div class="card">
+        <h3>Per-site rules</h3>
+        <p>JavaScript, cookies, fingerprinting, permissions, zoom, user agent and CSS —
+        per host, edited in the built-in Privacy Center with visual indicators.</p>
+      </div>
+      <div class="card">
+        <h3>Fingerprint switches</h3>
+        <p>Canvas readback, WebGL, remote fonts and referrer trimming are hard switches
+        applied through content filters and user scripts — no promises, just blocked surfaces.</p>
+      </div>
+      <div class="card">
+        <h3>Profiles and libraries</h3>
+        <p>Isolated profiles with their own history, bookmarks, autofill and storage;
+        a bookmarks manager, search engine editor with <code>!keyword</code> shortcuts.</p>
+      </div>
+      <div class="card">
+        <h3>Engine privacy by default</h3>
+        <p>Global Privacy Control (JS + Sec-GPC header), tracker blocklist compiled into
+        content filters, branded error pages, private tabs that never touch disk.</p>
+      </div>
+      <div class="card">
+        <h3>Material Design 3, pastel peach</h3>
+        <p>Solid fills, 1px outlines, radius 8, no gradients, no shadows, no blur —
+        a calm interface that stays out of the way.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <h2>Install</h2>
+    <div class="install">
+      <strong>deb (Debian, Ubuntu and derivatives)</strong>
+      <code>sudo apt install ./kiwi_0.6.0_amd64.deb</code>
+      <strong>Flatpak</strong>
+      <code>flatpak install ./kiwi.flatpak</code>
+      <p class="note">Grab the current artifacts from the
+      <a href="https://github.com/mel0k1/Kiwi/releases/latest">latest release</a>.
+      The in-browser “Check for updates” button (Settings → About &amp; updates) checks
+      GitHub Releases only when you press it — no background traffic, ever.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Kiwi — LGPL-2.1-or-later</span>
+    <span>Engine: <a href="https://github.com/mel0k1/Mustela">Mustela</a> (WebKitGTK)</span>
+    <span><a href="https://github.com/mel0k1/Kiwi/issues">Issues</a></span>
+  </div>
+</footer>
+</body>
+</html>

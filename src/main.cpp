@@ -65,6 +65,16 @@ int main(int argc, char** argv) {
     g_free(settings_path);
 
     Browser browser;
+    browser.gapp = g_application_new("io.github.mel0k1.Kiwi", G_APPLICATION_NON_UNIQUE);
+    GError* gapp_error = nullptr;
+    if (g_application_register(browser.gapp, nullptr, &gapp_error)) {
+        g_application_hold(browser.gapp);
+    } else {
+        // No session bus (headless or restricted sandbox): notifications drop quietly.
+        if (gapp_error) g_error_free(gapp_error);
+        g_object_unref(browser.gapp);
+        browser.gapp = nullptr;
+    }
     browser.settings = settings;
     browser.privacy = privacy;
     browser.sites = std::move(sites);
