@@ -534,7 +534,7 @@ KiwiTab* open_tab(Browser& b, const std::string& url, bool force_private) {
     gtk_notebook_set_current_page(GTK_NOTEBOOK(b.notebook), idx);
     gtk_widget_show(widget);
 
-    if (!url.empty()) tab->view->load_url(mustela::resolve_entry(url, b.settings));
+    if (!url.empty()) tab->view->load_url(url);
     refresh_chrome(b);
     return tab;
 }
