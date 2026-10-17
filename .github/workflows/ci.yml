@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build bundle
-        uses: flathub-infra/flatpak-builder-action@v6
+        uses: flatpak/flatpak-github-actions@v6.8
         with:
           bundle: kiwi.flatpak
           manifest-path: packaging/flatpak/io.github.mel0k1.Kiwi.yml
