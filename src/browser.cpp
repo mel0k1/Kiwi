@@ -9,6 +9,8 @@
 #include "mustela/mustela.hpp"
 #include "mustela/view.hpp"
 
+#include "icons.hpp"
+#include "start_page.hpp"
 #include "viewhost.hpp"
 
 KiwiTab* active_tab(Browser& b);
@@ -208,7 +210,7 @@ bool run_auth_prompt(Browser& b, const std::string& label, std::string& user, st
 }
 
 void on_close_tab_clicked(GtkButton*, gpointer user_data) {
-    close_tab(*browser, static_cast<KiwiTab*>(user_data));
+    if (browser) close_tab(*browser, static_cast<KiwiTab*>(user_data));
 }
 
 GtkWidget* build_tab_label(Browser&, KiwiTab* tab) {
@@ -220,8 +222,7 @@ GtkWidget* build_tab_label(Browser&, KiwiTab* tab) {
     gtk_label_set_width_chars(GTK_LABEL(tab->title_label), 18);
     gtk_label_set_xalign(GTK_LABEL(tab->title_label), 0.0f);
 
-    GtkWidget* close_btn = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
-    gtk_button_set_relief(GTK_BUTTON(close_btn), GTK_RELIEF_NONE);
+    GtkWidget* close_btn = kiwi::icon_button(kiwi::Icon::Close, "Close tab", 12);
     gtk_widget_set_valign(close_btn, GTK_ALIGN_CENTER);
     g_signal_connect(close_btn, "clicked", G_CALLBACK(on_close_tab_clicked), tab);
 
@@ -337,6 +338,25 @@ void on_switch_page(GtkNotebook*, GtkWidget*, guint, gpointer) {
 void on_page_removed(GtkNotebook*, GtkWidget*, gpointer) {
     refresh_chrome(*browser);
 }
+
+namespace {
+
+// Tabs whose View (native WebKit page) must outlive the current callback.
+// Destroying a View directly inside a WebKit callback — window.close(),
+// context-menu actions, close during a load — re-enters the engine while it
+// is still dispatching. The KiwiTab objects park here and are released by an
+// idle source, safely outside every WebKit stack.
+std::vector<std::unique_ptr<KiwiTab>>& dying_tabs() {
+    static std::vector<std::unique_ptr<KiwiTab>> store;
+    return store;
+}
+
+gboolean destroy_dying_tabs(gpointer) {
+    dying_tabs().clear();
+    return G_SOURCE_REMOVE;
+}
+
+}  // namespace
 
 void on_page_reordered(GtkNotebook*, GtkWidget* child, guint page_num, gpointer) {
     Browser& b = *browser;
@@ -658,16 +678,36 @@ void refresh_chrome(Browser& b) {
         gtk_widget_set_sensitive(b.reload_btn, !tab->uri.empty());
         update_tab_label(b, tab);
     }
-    gtk_notebook_set_show_tabs(GTK_NOTEBOOK(b.notebook), gtk_notebook_get_n_pages(GTK_NOTEBOOK(b.notebook)) > 1);
+    // The tab strip stays visible even with a single tab: a browser without
+    // visible tabs reads as a stub (and hides Ctrl+T / drag targets).
+    gtk_notebook_set_show_tabs(GTK_NOTEBOOK(b.notebook), TRUE);
     update_window_title(b);
     refresh_status(b);
     update_privacy_indicator(b);
     update_bookmark_star(b);
 }
 
+namespace {
+
+// Renders the internal start page into the profile and returns its file URI.
+std::string start_page_uri(Browser& b, bool private_mode) {
+    std::string root = b.profile ? b.profile->root() : std::string();
+    if (root.empty()) return std::string();
+    std::vector<mustela::BookmarkEntry> tiles;
+    if (b.bookmarks) tiles = b.bookmarks->entries();
+    return kiwi::write_start_page(root, b.settings, tiles, private_mode);
+}
+
+}  // namespace
+
 void navigate_active(Browser& b, const std::string& entry_text) {
     KiwiTab* tab = active_tab(b);
     if (!tab) return;
+    if (kiwi::is_start_page_entry(entry_text)) {
+        std::string uri = start_page_uri(b, tab->private_tab);
+        tab->view->load_url(uri.empty() ? "about:blank" : uri);
+        return;
+    }
     std::string url = mustela::resolve_entry(entry_text, b.settings);
     if (!url.empty()) tab->view->load_url(url);
 }
@@ -676,10 +716,15 @@ void close_tab(Browser& b, KiwiTab* tab) {
     gint idx = tab_index(b, tab);
     if (idx < 0) return;
     if (tab == active_tab(b)) toggle_find_bar(b, false);
-    gtk_notebook_remove_page(GTK_NOTEBOOK(b.notebook), idx);
+    std::unique_ptr<KiwiTab> owned = std::move(b.tabs[static_cast<size_t>(idx)]);
     b.tabs.erase(b.tabs.begin() + idx);
+    gint page = gtk_notebook_page_num(GTK_NOTEBOOK(b.notebook), owned->host);
+    if (page >= 0) gtk_notebook_remove_page(GTK_NOTEBOOK(b.notebook), page);
+    dying_tabs().push_back(std::move(owned));
+    g_idle_add_full(G_PRIORITY_HIGH_IDLE + 50, destroy_dying_tabs, nullptr, nullptr);
     if (b.tabs.empty()) {
-        open_tab(b, b.settings.homepage, b.privacy.default_private == mustela::TabPrivacy::Private);
+        open_tab(b, b.settings.homepage,
+            b.privacy.default_private == mustela::TabPrivacy::Private);
         return;
     }
     refresh_chrome(b);
@@ -808,7 +853,12 @@ KiwiTab* open_tab(Browser& b, const std::string& url, bool force_private) {
     gtk_notebook_set_current_page(GTK_NOTEBOOK(b.notebook), idx);
     gtk_widget_show(tab->host);
 
-    if (!url.empty()) tab->view->load_url(url);
+    std::string load = url;
+    if (kiwi::is_start_page_entry(url)) {
+        load = start_page_uri(b, priv);
+        if (load.empty()) load = "about:blank";
+    }
+    if (!load.empty()) tab->view->load_url(load);
     refresh_chrome(b);
     return tab;
 }
@@ -819,6 +869,13 @@ bool kiwi_shortcut(Browser& b, guint keyval, GdkModifierType mods) {
 
 void build_browser_ui(Browser& b, const char* startup_url) {
     browser = &b;
+
+    // The engine default homepage ("https://example.org") predates the start
+    // page; both fresh profiles and untouched v0.9 installs get the real
+    // new-tab experience. Explicit homepages are kept as-is.
+    if (b.settings.homepage.empty() || b.settings.homepage == "https://example.org") {
+        b.settings.homepage = kiwi::kStartPageUri;
+    }
 
     mustela::ViewConfig config;
     config.settings = &b.settings;
@@ -889,9 +946,9 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     GtkWidget* toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
     gtk_container_set_border_width(GTK_CONTAINER(toolbar), 2);
 
-    b.back_btn = gtk_button_new_from_icon_name("go-previous-symbolic", GTK_ICON_SIZE_BUTTON);
-    b.forward_btn = gtk_button_new_from_icon_name("go-next-symbolic", GTK_ICON_SIZE_BUTTON);
-    b.reload_btn = gtk_button_new_from_icon_name("view-refresh-symbolic", GTK_ICON_SIZE_BUTTON);
+    b.back_btn = kiwi::icon_button(kiwi::Icon::Back, "Back (Alt+Left)");
+    b.forward_btn = kiwi::icon_button(kiwi::Icon::Forward, "Forward (Alt+Right)");
+    b.reload_btn = kiwi::icon_button(kiwi::Icon::Reload, "Reload (Ctrl+R)");
     b.private_toggle = gtk_toggle_button_new_with_label("Private");
     gtk_widget_set_tooltip_text(b.private_toggle, "New tabs open in private mode");
     b.privacy_btn = gtk_button_new();
@@ -904,8 +961,8 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_widget_set_tooltip_text(b.privacy_btn, "Privacy Center — site overrides and stored data");
     b.url_entry = gtk_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(b.url_entry), "Search or enter address");
-    gtk_entry_set_icon_from_icon_name(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
-        "non-starred-symbolic");
+    gtk_entry_set_icon_from_pixbuf(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
+        kiwi::icon_pixbuf(kiwi::Icon::Star, 16, true));
     gtk_entry_set_icon_tooltip_text(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
         "Bookmark this page (Ctrl+D)");
     g_signal_connect(b.url_entry, "icon-press", G_CALLBACK(on_bookmark_icon_pressed), nullptr);
@@ -919,33 +976,25 @@ void build_browser_ui(Browser& b, const char* startup_url) {
         "Cookie policy, tracking prevention and fingerprint budget. "
         "Ctrl+F find, Ctrl+S save page, F11 fullscreen, Ctrl+D bookmark, "
         "Ctrl+Shift+O bookmarks, Ctrl+H history, Ctrl+J downloads");
-    GtkWidget* new_tab_btn = gtk_button_new_from_icon_name("tab-new-symbolic", GTK_ICON_SIZE_BUTTON);
-    b.downloads_btn = gtk_button_new_from_icon_name("document-save-symbolic", GTK_ICON_SIZE_BUTTON);
-    gtk_button_set_relief(GTK_BUTTON(b.downloads_btn), GTK_RELIEF_NONE);
+    GtkWidget* new_tab_btn = kiwi::icon_button(kiwi::Icon::Plus, "New tab (Ctrl+T)");
+    b.downloads_btn = kiwi::icon_button(kiwi::Icon::Download, "Downloads (Ctrl+J)");
     gtk_widget_set_focus_on_click(b.downloads_btn, FALSE);
-    gtk_widget_set_tooltip_text(b.downloads_btn, "Downloads (Ctrl+J)");
-    b.settings_btn = gtk_button_new_from_icon_name("emblem-system-symbolic", GTK_ICON_SIZE_BUTTON);
-    gtk_button_set_relief(GTK_BUTTON(b.settings_btn), GTK_RELIEF_NONE);
-    gtk_widget_set_focus_on_click(b.settings_btn, FALSE);
-    gtk_widget_set_tooltip_text(b.settings_btn, "Settings — search engines and profiles (Ctrl+,)");
+    b.settings_btn = kiwi::icon_button(kiwi::Icon::Gear, "Settings — search engines and profiles (Ctrl+,)");
 
     b.find_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     gtk_widget_set_no_show_all(b.find_bar, TRUE);
     gtk_container_set_border_width(GTK_CONTAINER(b.find_bar), 2);
     gtk_style_context_add_class(gtk_widget_get_style_context(b.find_bar), "kiwi-findbar");
-    GtkWidget* find_icon = gtk_image_new_from_icon_name("edit-find-symbolic", GTK_ICON_SIZE_BUTTON);
+    GtkWidget* find_icon = kiwi::icon_image(kiwi::Icon::Find);
     gtk_widget_set_margin_start(find_icon, 4);
     b.find_entry = gtk_search_entry_new();
     gtk_entry_set_placeholder_text(GTK_ENTRY(b.find_entry), "Find in page");
     gtk_widget_set_size_request(b.find_entry, 260, -1);
     b.find_hint = gtk_label_new("");
     gtk_style_context_add_class(gtk_widget_get_style_context(b.find_hint), "kiwi-secondary");
-    GtkWidget* find_prev_btn = gtk_button_new_from_icon_name("go-up-symbolic", GTK_ICON_SIZE_BUTTON);
-    gtk_widget_set_tooltip_text(find_prev_btn, "Previous match (Shift+F3)");
-    GtkWidget* find_next_btn = gtk_button_new_from_icon_name("go-down-symbolic", GTK_ICON_SIZE_BUTTON);
-    gtk_widget_set_tooltip_text(find_next_btn, "Next match (F3 or Enter)");
-    GtkWidget* find_close_btn = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_BUTTON);
-    gtk_widget_set_tooltip_text(find_close_btn, "Close find bar (Esc)");
+    GtkWidget* find_prev_btn = kiwi::icon_button(kiwi::Icon::ChevronUp, "Previous match (Shift+F3)");
+    GtkWidget* find_next_btn = kiwi::icon_button(kiwi::Icon::ChevronDown, "Next match (F3 or Enter)");
+    GtkWidget* find_close_btn = kiwi::icon_button(kiwi::Icon::Close, "Close find bar (Esc)");
     GtkWidget* find_buttons[] = {find_prev_btn, find_next_btn, find_close_btn};
     for (GtkWidget* btn : find_buttons) {
         gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
@@ -958,9 +1007,9 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     gtk_box_pack_start(GTK_BOX(b.find_bar), find_next_btn, FALSE, FALSE, 0);
     gtk_box_pack_end(GTK_BOX(b.find_bar), find_close_btn, FALSE, FALSE, 0);
 
-    GtkWidget* toolbar_buttons[] = {b.back_btn, b.forward_btn, b.reload_btn, new_tab_btn};
+    GtkWidget* toolbar_buttons[] = {b.back_btn, b.forward_btn, b.reload_btn, new_tab_btn,
+        b.downloads_btn, b.settings_btn};
     for (GtkWidget* btn : toolbar_buttons) {
-        gtk_button_set_relief(GTK_BUTTON(btn), GTK_RELIEF_NONE);
         gtk_widget_set_focus_on_click(btn, FALSE);
     }
     gtk_button_set_relief(GTK_BUTTON(b.private_toggle), GTK_RELIEF_NONE);
@@ -1018,4 +1067,78 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     });
 
     gtk_widget_show_all(window);
+}
+
+// ---------------------------------------------------------------------------
+// Self-test: a scripted smoke pass that drives the exact paths users hit in
+// the first minutes — open a tab, open the start page, switch tabs, navigate
+// from the omnibox, close tabs, resize the window. CI runs it on real
+// Windows; any crash or assert fails the build instead of the user's session.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+int self_test_exit = 0;
+
+gboolean self_test_step(gpointer data) {
+    Browser& b = *static_cast<Browser*>(data);
+    static int step = 0;
+    ++step;
+    switch (step) {
+        case 1:
+            g_print("self-test: open second tab\n");
+            open_tab(b, "about:blank");
+            break;
+        case 2:
+            g_print("self-test: open start page tab\n");
+            open_tab(b, kiwi::kStartPageUri);
+            break;
+        case 3:
+            g_print("self-test: switch back to tab 0\n");
+            gtk_notebook_set_current_page(GTK_NOTEBOOK(b.notebook), 0);
+            break;
+        case 4:
+            g_print("self-test: omnibox start page\n");
+            navigate_active(b, kiwi::kStartPageUri);
+            break;
+        case 5:
+            g_print("self-test: close second tab\n");
+            if (b.tabs.size() >= 2) close_tab(b, b.tabs.back().get());
+            break;
+        case 6:
+            g_print("self-test: resize window\n");
+            gtk_window_resize(GTK_WINDOW(b.window), 960, 720);
+            break;
+        case 7:
+            g_print("self-test: open and close another tab\n");
+            open_tab(b, "about:blank");
+            break;
+        case 8:
+            if (b.tabs.size() >= 2) close_tab(b, b.tabs.back().get());
+            break;
+        case 9: {
+            if (b.tabs.empty() || !active_tab(b) || !active_tab(b)->view) {
+                g_print("self-test: FAIL — no live tab at the end\n");
+                self_test_exit = 2;
+            } else {
+                g_print("self-test: ok (%d tab(s) alive)\n",
+                    static_cast<int>(b.tabs.size()));
+            }
+            gtk_widget_destroy(b.window);
+            return G_SOURCE_REMOVE;
+        }
+        default:
+            return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+}  // namespace
+
+void run_self_test(Browser& b) {
+    g_timeout_add(1500, self_test_step, &b);
+}
+
+int kiwi_self_test_exit_code() {
+    return self_test_exit;
 }

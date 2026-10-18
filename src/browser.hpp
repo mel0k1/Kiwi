@@ -79,6 +79,10 @@ void navigate_active(Browser& b, const std::string& entry_text);
 void refresh_chrome(Browser& b);
 void flash_status(Browser& b, const std::string& text);
 
+// Scripted CI smoke pass (--self-test); reports through the process exit code.
+void run_self_test(Browser& b);
+int kiwi_self_test_exit_code();
+
 void open_history_window(Browser& b);
 void open_downloads_window(Browser& b);
 void refresh_downloads_window(Browser& b);

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kiwi
-    VERSION 0.9.0
+    VERSION 0.10.0
     DESCRIPTION "Privacy-first web browser powered by the Mustela engine"
     LANGUAGES CXX)
 
@@ -54,7 +54,10 @@ add_executable(kiwi
     src/screens.cpp
     src/prefs.cpp
     src/context_menu.cpp
-    src/updater.cpp)
+    src/updater.cpp
+    src/icons.cpp
+    src/start_page.cpp
+    src/diagnostics.cpp)
 
 if(WIN32)
     target_sources(kiwi PRIVATE src/viewhost_win.cpp)
@@ -78,6 +81,9 @@ target_link_libraries(kiwi PRIVATE
     ${MUSTELA_LINK_LIBS}
     ${GTK_LIBRARIES}
     ${SOUP_LIBRARIES})
+if(WIN32)
+    target_link_libraries(kiwi PRIVATE dbghelp)
+endif()
 target_compile_options(kiwi PRIVATE ${GTK_CFLAGS_OTHER} ${SOUP_CFLAGS_OTHER})
 
 if(WIN32 AND NOT MSVC)
@@ -90,7 +96,7 @@ else()
     target_compile_options(kiwi PRIVATE -Wall -Wextra)
 endif()
 
-option(KIWI_BUILD_TESTS "Build the updater unit tests" ON)
+option(KIWI_BUILD_TESTS "Build the unit tests" ON)
 if(KIWI_BUILD_TESTS)
     enable_testing()
     add_executable(kiwi_updater_tests src/tests/test_updater.cpp)
@@ -108,6 +114,16 @@ if(KIWI_BUILD_TESTS)
         ${GTK_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS} ${MUSTELA_BUILD_DIR})
     target_link_libraries(kiwi_updater_tests PRIVATE ${GTK_LIBRARIES} ${SOUP_LIBRARIES})
     add_test(NAME kiwi_updater_tests COMMAND kiwi_updater_tests)
+
+    add_executable(kiwi_start_page_tests src/tests/test_start_page.cpp src/start_page.cpp)
+    target_include_directories(kiwi_start_page_tests PRIVATE
+        src
+        ${MUSTELA_ROOT}/include
+        ${GTK_INCLUDE_DIRS}
+        ${SOUP_INCLUDE_DIRS})
+    target_link_directories(kiwi_start_page_tests PRIVATE ${GTK_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS})
+    target_link_libraries(kiwi_start_page_tests PRIVATE ${GTK_LIBRARIES} ${SOUP_LIBRARIES})
+    add_test(NAME kiwi_start_page_tests COMMAND kiwi_start_page_tests)
 endif()
 
 include(GNUInstallDirs)

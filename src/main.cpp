@@ -19,6 +19,7 @@
 #include "mustela/view.hpp"
 
 #include "browser.hpp"
+#include "diagnostics.hpp"
 #include "theme.hpp"
 
 #ifdef _WIN32
@@ -42,15 +43,18 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
     apply_windows_pixbuf_path();
 #endif
+    kiwi::install_crash_handler();
     gtk_init(&argc, &argv);
-
+    kiwi::install_gtk_log_file();
     kiwi::apply_theme();
     kiwi::apply_app_icon();
 
     const char* url = nullptr;
     bool start_private = false;
+    bool self_test = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--private") == 0) start_private = true;
+        else if (std::strcmp(argv[i], "--self-test") == 0) self_test = true;
         else url = argv[i];
     }
 
@@ -118,6 +122,7 @@ int main(int argc, char** argv) {
         || browser.privacy.default_private == mustela::TabPrivacy::Private;
 
     build_browser_ui(browser, url);
+    if (self_test) run_self_test(browser);
     gtk_main();
-    return 0;
+    return kiwi_self_test_exit_code();
 }

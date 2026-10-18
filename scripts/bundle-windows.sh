@@ -10,6 +10,11 @@ mkdir -p "$bundle" "$bundle/assets"
 
 cp build/kiwi.exe "$bundle/"
 cp "$runtime"/*.dll "$bundle/"
+# The WebKit UI process spawns helper executables for content and networking.
+# Without them every page load silently stays blank — the "white window" bug.
+# MiniBrowser.exe and .pdb files are build-tooling, not runtime payload.
+find "$runtime" -maxdepth 1 -type f -name "*.exe" \
+    ! -iname "MiniBrowser.exe" -exec cp {} "$bundle/" \;
 find "$runtime" -maxdepth 1 -type d -name "*.resources" -exec cp -r {} "$bundle/" \; 2>/dev/null || true
 cp assets/logo.png "$bundle/assets/"
 
@@ -43,5 +48,12 @@ start "" kiwi.exe %*
 LAUNCHER
 
 echo "bundle contents:"
-ls "$bundle" | head -30
+ls "$bundle" | head -40
 echo "dll count: $(ls "$bundle" | grep -c '\.dll$')"
+echo "exe count: $(ls "$bundle" | grep -c '\.exe$')"
+# The browser cannot render anything without the WebKit helper processes;
+# fail the build here instead of shipping a white window.
+if ! ls "$bundle" | grep -qi "webprocess"; then
+    echo "bundle check: FAILED — no WebProcess executable in the bundle" >&2
+    exit 1
+fi

@@ -10,6 +10,8 @@
 
 #include "mustela/mustela.hpp"
 
+#include "icons.hpp"
+
 namespace {
 
 enum HistoryCols {
@@ -817,8 +819,8 @@ void update_bookmark_star(Browser& b) {
     if (!b.url_entry) return;
     KiwiTab* tab = active_tab(b);
     bool marked = tab && b.bookmarks && !tab->uri.empty() && b.bookmarks->contains(tab->uri);
-    gtk_entry_set_icon_from_icon_name(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
-        marked ? "starred-symbolic" : "non-starred-symbolic");
+    gtk_entry_set_icon_from_pixbuf(GTK_ENTRY(b.url_entry), GTK_ENTRY_ICON_SECONDARY,
+        kiwi::icon_pixbuf(marked ? kiwi::Icon::StarFilled : kiwi::Icon::Star, 16, !marked));
 }
 
 void toggle_bookmark(Browser& b) {

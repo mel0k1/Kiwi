@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <memory>
 #include <vector>
 
 #include <gdk/gdkwin32.h>
@@ -19,8 +20,12 @@ struct ViewPage {
     bool attached = false;
 };
 
-std::vector<ViewPage>& pages() {
-    static std::vector<ViewPage> store;
+// Pages must live at stable addresses: GTK signal handlers hold raw ViewPage
+// pointers for the whole life of the drawing area. A plain vector would
+// reallocate on every new tab and turn every earlier pointer into garbage
+// (the first use-after-free hit the very next map/resize of an old tab).
+std::vector<std::unique_ptr<ViewPage>>& pages() {
+    static std::vector<std::unique_ptr<ViewPage>> store;
     return store;
 }
 
@@ -83,9 +88,9 @@ void on_page_size_allocate(GtkWidget*, GdkRectangle*, ViewPage* page) {
 }
 
 void on_area_destroy(GtkWidget*, ViewPage* page) {
-    std::vector<ViewPage>& store = pages();
+    std::vector<std::unique_ptr<ViewPage>>& store = pages();
     for (auto it = store.begin(); it != store.end(); ++it) {
-        if (it->area == page->area) {
+        if (it->get() == page) {
             store.erase(it);
             return;
         }
@@ -206,17 +211,21 @@ void on_window_destroy(GtkWidget*, gpointer) {
 }
 
 GtkWidget* view_page_widget(mustela::View* view, GtkWindow* parent) {
-    for (ViewPage& page : pages()) {
-        if (page.view == view) return page.area;
+    for (std::unique_ptr<ViewPage>& page : pages()) {
+        if (page->view == view) return page->area;
     }
     GtkWidget* area = gtk_drawing_area_new();
     gtk_widget_set_can_focus(area, TRUE);
-    pages().push_back(ViewPage{view, area, parent, false});
-    ViewPage* page = &pages().back();
-    g_signal_connect(area, "map", G_CALLBACK(on_page_map), page);
-    g_signal_connect(area, "unmap", G_CALLBACK(on_page_unmap), page);
-    g_signal_connect(area, "size-allocate", G_CALLBACK(on_page_size_allocate), page);
-    g_signal_connect(area, "destroy", G_CALLBACK(on_area_destroy), page);
+    auto page = std::make_unique<ViewPage>();
+    page->view = view;
+    page->area = area;
+    page->parent = parent;
+    ViewPage* raw = page.get();
+    pages().push_back(std::move(page));
+    g_signal_connect(area, "map", G_CALLBACK(on_page_map), raw);
+    g_signal_connect(area, "unmap", G_CALLBACK(on_page_unmap), raw);
+    g_signal_connect(area, "size-allocate", G_CALLBACK(on_page_size_allocate), raw);
+    g_signal_connect(area, "destroy", G_CALLBACK(on_area_destroy), raw);
     return area;
 }
 
