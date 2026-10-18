@@ -97,7 +97,7 @@ jobs:
 
       - name: Fetch WebKit C API headers
         shell: pwsh
-        run: ../Mustela/scripts/fetch-win-headers.ps1 -Destination build/sdk/include
+        run: python scripts/fetch-win-headers.py ../Mustela/scripts/win-headers.txt build/sdk/include
 
       - name: Assemble WinCairo runtime
         shell: pwsh
