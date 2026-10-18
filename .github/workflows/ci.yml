@@ -173,7 +173,7 @@ jobs:
   release:
     name: attach packages to the release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, flatpak]
+    needs: [linux, flatpak, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
