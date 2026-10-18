@@ -9,6 +9,7 @@
 #include <direct.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <vector>

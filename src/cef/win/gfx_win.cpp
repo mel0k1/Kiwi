@@ -192,7 +192,7 @@ void init() {
 }
 
 const Palette& palette() {
-    static Palette p = []() {
+    static const Palette value = []() {
         Palette p;
         p.chrome_bg = RGB(243, 243, 246);
         p.chrome_text = RGB(32, 33, 36);
@@ -210,7 +210,7 @@ const Palette& palette() {
         p.danger_hover = RGB(242, 139, 130);
         return p;
     }();
-    return p;
+    return value;
 }
 
 COLORREF blend(COLORREF base, COLORREF color, int alpha) {

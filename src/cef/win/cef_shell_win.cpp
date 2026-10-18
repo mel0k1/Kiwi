@@ -996,20 +996,20 @@ void CefShell::layout() {
         lay_.find_row = {0, fy, w, fy + find_h};
         int entry_w = MulDiv(280, dpi, 96);
         int label_w = MulDiv(90, dpi, 96);
-        int small = MulDiv(28, dpi, 96);
+        int mini = MulDiv(28, dpi, 96);
         int gap = MulDiv(6, dpi, 96);
         int fx = pad;
-        int by = fy + (find_h - small) / 2;
+        int by = fy + (find_h - mini) / 2;
         lay_.find_entry = {fx, fy + (find_h - omni_h) / 2 + MulDiv(2, dpi, 96),
                            fx + entry_w, fy + (find_h + omni_h) / 2 - MulDiv(2, dpi, 96)};
         lay_.find_label = {fx + entry_w + gap, fy, fx + entry_w + gap + label_w,
                            fy + find_h};
-        int x_close = w - pad - small;
-        int x_next = x_close - gap - small;
-        int x_prev = x_next - gap - small;
-        lay_.find_close = {x_close, by, x_close + small, by + small};
-        lay_.find_next = {x_next, by, x_next + small, by + small};
-        lay_.find_prev = {x_prev, by, x_prev + small, by + small};
+        int x_close = w - pad - mini;
+        int x_next = x_close - gap - mini;
+        int x_prev = x_next - gap - mini;
+        lay_.find_close = {x_close, by, x_close + mini, by + mini};
+        lay_.find_next = {x_next, by, x_next + mini, by + mini};
+        lay_.find_prev = {x_prev, by, x_prev + mini, by + mini};
     }
 
     lay_.status = {0, h - status_h, w, h};
