@@ -113,20 +113,21 @@ jobs:
         shell: pwsh
         run: |
           function Run-KiwiSelfTest([string]$Label) {
+            # Write-Host keeps log lines out of the function's return value.
             Remove-Item "$env:LOCALAPPDATA\kiwi\startup.log","$env:LOCALAPPDATA\kiwi\crash.log" -ErrorAction SilentlyContinue
             $p = Start-Process -FilePath build/bundle/kiwi.exe -ArgumentList "--self-test" -PassThru
             if (-not $p.WaitForExit(120000)) {
               $p.Kill()
               throw "kiwi self-test ($Label) timed out after 120s"
             }
-            "kiwi self-test ($Label) exit code: $($p.ExitCode)"
+            Write-Host "kiwi self-test ($Label) exit code: $($p.ExitCode)"
             $startup = "$env:LOCALAPPDATA\kiwi\startup.log"
-            if (Test-Path $startup) { Get-Content $startup | ForEach-Object { "startup: $_" } }
+            if (Test-Path $startup) { Get-Content $startup | ForEach-Object { Write-Host "startup: $_" } }
             $crash = "$env:LOCALAPPDATA\kiwi\crash.log"
             if (Test-Path $crash) {
-              Get-Content $crash
+              Get-Content $crash | ForEach-Object { Write-Host "crash: $_" }
               $ceflog = "$env:LOCALAPPDATA\kiwi\cef.log"
-              if (Test-Path $ceflog) { Get-Content $ceflog -Tail 60 }
+              if (Test-Path $ceflog) { Get-Content $ceflog -Tail 60 | ForEach-Object { Write-Host "cef: $_" } }
               return 2
             }
             if ($p.ExitCode -ne 0) { return $p.ExitCode }
