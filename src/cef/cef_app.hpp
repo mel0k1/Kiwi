@@ -25,7 +25,7 @@ public:
                           CefRefPtr<CefV8Context> context) override;
 
 private:
-    void inject_scripts(CefRefPtr<CefV8Context> context);
+    void inject_scripts(CefRefPtr<CefV8Context> context, const std::string& frame_url);
 
     IMPLEMENT_REFCOUNTING(KiwiCefApp);
     DISALLOW_COPY_AND_ASSIGN(KiwiCefApp);

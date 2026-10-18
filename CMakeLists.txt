@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(kiwi
-    VERSION 0.12.0
+    VERSION 0.13.0
     DESCRIPTION "Privacy-first web browser"
     LANGUAGES C CXX)
 

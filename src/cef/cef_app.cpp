@@ -56,22 +56,50 @@ void KiwiCefApp::OnBeforeCommandLineProcessing(const CefString& process_type,
     command_line->AppendSwitchWithValue("kiwi-fp-canvas", settings.fingerprint_canvas ? "1" : "0");
     command_line->AppendSwitchWithValue("kiwi-fp-referrer", settings.fingerprint_referrer);
     command_line->AppendSwitchWithValue("kiwi-gpc", settings.gpc ? "1" : "0");
+    if (!rt->site_rules_path.empty()) {
+        // The render process has no runtime(): it loads the same store
+        // read-only from this path to resolve per-site fingerprint rules.
+        command_line->AppendSwitchWithValue("kiwi-siterules", rt->site_rules_path);
+    }
 }
 
 void KiwiCefApp::OnContextCreated(CefRefPtr<CefBrowser> browser,
                                   CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefV8Context> context) {
     (void)browser;
-    (void)frame;
-    inject_scripts(context);
+    inject_scripts(context, frame->GetURL().ToString());
 }
 
-void KiwiCefApp::inject_scripts(CefRefPtr<CefV8Context> context) {
+void KiwiCefApp::inject_scripts(CefRefPtr<CefV8Context> context,
+                                const std::string& frame_url) {
     CefRefPtr<CefCommandLine> command_line = CefCommandLine::GetGlobalCommandLine();
-    const bool webgl = switch_value(command_line, "kiwi-fp-webgl") == "1";
-    const bool canvas = switch_value(command_line, "kiwi-fp-canvas") == "1";
+    bool webgl = switch_value(command_line, "kiwi-fp-webgl") == "1";
+    bool canvas = switch_value(command_line, "kiwi-fp-canvas") == "1";
     const bool gpc = switch_value(command_line, "kiwi-gpc") == "1";
-    const std::string referrer = switch_value(command_line, "kiwi-fp-referrer");
+    std::string referrer = switch_value(command_line, "kiwi-fp-referrer");
+
+    // Per-site fingerprint overrides resolved against the same sites.toml
+    // the GTK build and the browser process use.
+    const std::string rules_path = switch_value(command_line, "kiwi-siterules");
+    if (!rules_path.empty()) {
+        static mustela::SiteRules rules(rules_path);
+        static bool loaded = false;
+        if (!loaded) {
+            rules.load();
+            loaded = true;
+        }
+        const mustela::SitePolicy* site =
+            rules.find(mustela::host_from_uri(frame_url));
+        if (site && site->fingerprint == mustela::SiteRule::Allow) {
+            webgl = false;
+            canvas = false;
+            referrer.clear();
+        } else if (site && site->fingerprint == mustela::SiteRule::Deny) {
+            webgl = true;
+            canvas = true;
+            referrer = "never";
+        }
+    }
 
     if (!webgl && !canvas && !gpc && referrer.empty()) return;
 

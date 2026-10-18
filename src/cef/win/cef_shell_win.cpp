@@ -5,6 +5,7 @@
 #include "../cef_client.hpp"
 #include "../cef_runtime.hpp"
 #include "../../start_page.hpp"
+#include "site_rules_win.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -51,7 +52,8 @@ enum ControlId {
     ID_FIND_PREV,
     ID_FIND_NEXT,
     ID_FIND_CLOSE,
-    ID_FIND_LABEL
+    ID_FIND_LABEL,
+    ID_SITERULES
 };
 
 struct WinTab {
@@ -197,6 +199,28 @@ void draw_glyph(HDC dc, const RECT& rect, ControlId id, bool enabled, bool press
             MoveToEx(dc, cx + 3, cy - 3, nullptr);
             LineTo(dc, cx - 3, cy + 3);
             break;
+        case ID_SITERULES: {
+            // Gear: ring + four spokes + hub.
+            Arc(dc, cx - r, cy - r, cx + r, cy + r, cx + r, cy, cx, cy + r);
+            Arc(dc, cx - r, cy - r, cx + r, cy + r, cx, cy - r, cx + r, cy);
+            Arc(dc, cx - r, cy - r, cx + r, cy + r, cx - r, cy, cx, cy - r);
+            Arc(dc, cx - r, cy - r, cx + r, cy + r, cx, cy + r, cx - r, cy);
+            MoveToEx(dc, cx, cy - r - 2, nullptr);
+            LineTo(dc, cx, cy - r + 2);
+            MoveToEx(dc, cx, cy + r - 2, nullptr);
+            LineTo(dc, cx, cy + r + 2);
+            MoveToEx(dc, cx - r - 2, cy, nullptr);
+            LineTo(dc, cx - r + 2, cy);
+            MoveToEx(dc, cx + r - 2, cy, nullptr);
+            LineTo(dc, cx + r + 2, cy);
+            HBRUSH hub = CreateSolidBrush(enabled ? kInk : kMuted);
+            HGDIOBJ old = SelectObject(dc, hub);
+            SelectObject(dc, GetStockObject(NULL_PEN));
+            Ellipse(dc, cx - 2, cy - 2, cx + 2, cy + 2);
+            SelectObject(dc, old);
+            DeleteObject(hub);
+            break;
+        }
         default:
             break;
     }
@@ -271,7 +295,7 @@ private:
     HWND host_ = nullptr;
     HWND omnibox_ = nullptr;
     HWND status_ = nullptr;
-    HWND buttons_[5] = {};
+    HWND buttons_[6] = {};
     HFONT font_ = nullptr;
 
     HWND find_bar_ = nullptr;
@@ -351,8 +375,9 @@ bool CefShell::create_window() {
 }
 
 void CefShell::create_controls() {
-    const ControlId ids[5] = {ID_BACK, ID_FORWARD, ID_RELOAD, ID_NEW_TAB, ID_CLOSE_TAB};
-    for (int i = 0; i < 5; ++i) {
+    const ControlId ids[6] = {ID_BACK, ID_FORWARD, ID_RELOAD, ID_NEW_TAB, ID_CLOSE_TAB,
+        ID_SITERULES};
+    for (int i = 0; i < 6; ++i) {
         buttons_[i] = CreateWindowExW(0, L"BUTTON", nullptr,
             WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_TABSTOP,
             0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ids[i])),
@@ -387,7 +412,7 @@ void CefShell::create_controls() {
         0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_STATUS)),
         GetModuleHandleW(nullptr), nullptr);
 
-    for (int i = 0; i < 5; ++i) SendMessageW(buttons_[i], WM_SETFONT, (WPARAM)font_, TRUE);
+    for (int i = 0; i < 6; ++i) SendMessageW(buttons_[i], WM_SETFONT, (WPARAM)font_, TRUE);
     SendMessageW(omnibox_, WM_SETFONT, (WPARAM)font_, TRUE);
     SendMessageW(tab_ctrl_, WM_SETFONT, (WPARAM)font_, TRUE);
     SendMessageW(status_, WM_SETFONT, (WPARAM)font_, TRUE);
@@ -640,6 +665,9 @@ void CefShell::on_command(WPARAM wparam, LPARAM lparam) {
             break;
         case ID_CLOSE_TAB:
             on_hotkey(HK_CLOSE_TAB);
+            break;
+        case ID_SITERULES:
+            open_site_rules_dialog(hwnd_);
             break;
         case ID_FIND_ENTRY:
             if (HIWORD(wparam) == EN_CHANGE) on_find_entry_changed();
@@ -1027,7 +1055,7 @@ void CefShell::layout() {
     MoveWindow(tab_ctrl_, 0, 0, width, tab_h, TRUE);
     int x = pad;
     int tool_y = tab_h + (tool_h - btn) / 2;
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         MoveWindow(buttons_[i], x, tool_y, btn, btn, TRUE);
         x += btn + pad;
     }

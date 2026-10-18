@@ -75,6 +75,9 @@ public:
                               bool is_loading,
                               bool can_go_back,
                               bool can_go_forward) override;
+    void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   int httpStatusCode) override;
     void OnStatusMessage(CefRefPtr<CefBrowser> browser, const CefString& value) override;
 
     CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(

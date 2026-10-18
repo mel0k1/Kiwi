@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 namespace kiwi {
 
@@ -59,6 +60,26 @@ std::string join_path(const std::string& dir, const std::string& name) {
     char last = dir.back();
     if (last == '/' || last == '\\') return dir + name;
     return dir + "/" + name;
+}
+
+// True when the URL path targets a JavaScript resource. Per-site JS-denied
+// sites get their external scripts cancelled here; inline scripts still run
+// (Chromium has no per-origin script toggle — documented as a partial).
+bool is_script_url(const std::string& url) {
+    size_t path_start = url.find("://");
+    std::string rest = path_start == std::string::npos ? url : url.substr(path_start + 3);
+    size_t slash = rest.find('/');
+    if (slash == std::string::npos) return false;
+    size_t query = rest.find_first_of("?#", slash);
+    std::string path = query == std::string::npos
+        ? rest.substr(slash)
+        : rest.substr(slash, query - slash);
+    if (path.size() < 3) return false;
+    std::string tail = path.substr(path.size() - 3);
+    for (char& c : tail) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return tail == ".js";
 }
 
 }  // namespace
@@ -126,6 +147,21 @@ void KiwiClient::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
     if (host_) host_->on_loading(browser->GetIdentifier(), is_loading);
 }
 
+void KiwiClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           int httpStatusCode) {
+    (void)httpStatusCode;
+    Runtime* rt = runtime();
+    if (!rt || !rt->site_rules || !frame->IsMain()) return;
+    const mustela::SiteDecision site = mustela::resolve_site(
+        rt->policy, *rt->site_rules, frame->GetURL().ToString());
+    // Chromium zoom level = log(factor) / log(1.2); 0.0 means 100%.
+    const double level = site.zoom > 0.0
+        ? std::log(site.zoom) / std::log(1.2)
+        : 0.0;
+    browser->GetHost()->SetZoomLevel(level);
+}
+
 void KiwiClient::OnStatusMessage(CefRefPtr<CefBrowser> browser, const CefString& value) {
     if (host_) host_->on_status(browser->GetIdentifier(), value.ToString());
 }
@@ -154,9 +190,16 @@ CefRefPtr<CefCookieAccessFilter> KiwiClient::GetCookieAccessFilter(
     CefRefPtr<CefRequest> request) {
     (void)browser;
     (void)frame;
-    (void)request;
     Runtime* rt = runtime();
-    if (rt && rt->policy.cookies != mustela::CookiePolicy::Always) return this;
+    if (!rt) return nullptr;
+    if (rt->policy.cookies != mustela::CookiePolicy::Always) return this;
+    if (rt->site_rules) {
+        // A per-site cookie deny needs the filter even under a global Always
+        // policy.
+        const mustela::SitePolicy* site =
+            rt->site_rules->find(url_host(request->GetURL().ToString()));
+        if (site && site->cookies == mustela::SiteRule::Deny) return this;
+    }
     return nullptr;
 }
 
@@ -175,16 +218,30 @@ cef_return_value_t KiwiClient::OnBeforeResourceLoad(CefRefPtr<CefBrowser> browse
         return RV_CANCEL;
     }
 
-    if (rt->policy.fingerprint.block_remote_fonts
+    const std::string url = request->GetURL().ToString();
+    if (!rt->site_rules) return RV_CONTINUE;
+    const mustela::SiteDecision site =
+        mustela::resolve_site(rt->policy, *rt->site_rules, url);
+
+    if (site.fingerprint.block_remote_fonts
         && request->GetResourceType() == RT_FONT_RESOURCE) {
         return RV_CANCEL;
     }
 
+    if (!site.javascript
+        && (request->GetResourceType() == RT_SCRIPT || is_script_url(url))) {
+        return RV_CANCEL;
+    }
+
     if (rt->policy.blocklist) {
-        const std::string host = url_host(request->GetURL().ToString());
+        const std::string host = url_host(url);
         if (!host.empty() && rt->blocklist.hit(mustela::normalize_host(host))) {
             return RV_CANCEL;
         }
+    }
+
+    if (rt->policy.gpc) {
+        request->SetHeaderByName("Sec-GPC", "1", true);
     }
 
     return RV_CONTINUE;
@@ -197,7 +254,16 @@ bool KiwiClient::cookie_allowed(CefRefPtr<CefRequest> request,
     if (rt->policy.cookies == mustela::CookiePolicy::Never) return false;
     const std::string host = url_host(request->GetURL().ToString());
     const std::string domain = CefString(&cookie.domain).ToString();
-    return !is_third_party(host, domain);
+    if (is_third_party(host, domain)) return false;
+    if (rt->site_rules) {
+        // SiteRule::Deny for cookies blocks everything for that site,
+        // regardless of the global third-party policy.
+        if (rt->site_rules->find(host) != nullptr
+            && rt->site_rules->find(host)->cookies == mustela::SiteRule::Deny) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool KiwiClient::CanSendCookie(CefRefPtr<CefBrowser> browser,

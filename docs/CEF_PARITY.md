@@ -25,7 +25,7 @@ Mustela view library on Windows anymore.
 | Fingerprint: WebGL / canvas | mustela-core scripts injected by engine | same scripts via `CefRenderProcessHandler::OnContextCreated` (before page scripts) | done |
 | Fingerprint: remote fonts | engine resource filtering | `RT_FONT` requests cancelled in `OnBeforeResourceLoad` | done |
 | Referrer trim | mustela-core script | same script | done |
-| GPC | mustela-core script | same script (header-level GPC open) | partial |
+| GPC | mustela-core script | script + `Sec-GPC: 1` header on every request | done |
 | Private tabs | ephemeral WebKit context | dedicated incognito `CefRequestContext` (empty `cache_path`), shared across private tabs | done |
 | Downloads | engine session callbacks | `CefDownloadHandler::OnBeforeDownload` → Downloads dir (or `downloads.dir`) | done |
 | Media access (camera/mic/geo) | engine permission flow, deny defaults | `OnRequestMediaAccessPermission` → cancel all | done |
@@ -37,7 +37,7 @@ Mustela view library on Windows anymore.
 | Popups | engine-owned tabs | `OnBeforePopup` → new Kiwi tab, opener privacy inherited | done |
 | History | engine store + history screen | not recorded yet | open |
 | Session restore | engine store + UI | not implemented | open |
-| Per-site rules (JS/cookies/fingerprint per site) | engine `resolve_site` + UI editor | core surface exists; no UI, global policy only | open |
+| Per-site rules (JS/cookies/fingerprint per site) | engine `resolve_site` + UI editor | shared `sites.toml` store + gear-button editor; enforcement: cookie deny in `CefCookieAccessFilter`, fingerprint allow/deny per frame in the render process, font blocking + zoom via `resolve_site` in `OnBeforeResourceLoad`, JS deny cancels external script resources (inline scripts still run — no per-origin toggle in Chromium) | done (JS partial) |
 | Data-clear screens | engine `ClearRequest` API + UI | no UI; Chromium keeps its own cache under `config/cef` | open |
 | Find in page | engine find controller + UI bar | `CefFindHandler` + find bar (Ctrl+F, F3/Shift+F3, Esc, "n of m" counter per tab) | done |
 | Context menu | engine `ContextMenuInfo` + MD3 menu | Chromium default menu | open |
@@ -49,7 +49,7 @@ Mustela view library on Windows anymore.
 | Settings UI | K2/K3 screens | no UI; edit `settings.toml` in `%LocalAppData%\kiwi` | open |
 | Chromium services trim | n/a | Translate, MediaRouter, OptimizationHints disabled; no component updates | done |
 | Crash diagnostics | engine + `crash.log`/minidump | same `diagnostics.cpp` (shared), plus CEF `cef.log` | done |
-| Chromium sandbox | n/a | disabled in 0.11.0 (`no_sandbox`); needs `cef_sandbox.lib` linkage pass | open |
+| Chromium sandbox | n/a | enabled via the CEF bootstrap loader: client builds as `kiwi.dll` exporting `RunWinMain`, `bootstrap.exe` renamed to `kiwi.exe` prepares the sandbox context for `CefExecuteProcess`/`CefInitialize` (`cef_sandbox.lib` no longer exists in CEF 138+) | done |
 | Update checker | libsoup on GTK | not implemented on CEF yet | open |
 
 ## Deliberately cut (кастрируем)

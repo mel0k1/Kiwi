@@ -6,6 +6,7 @@
 
 #include "mustela/mustela.hpp"
 #include "blocklist.hpp"
+#include "site_rules.hpp"
 
 namespace kiwi {
 
@@ -24,6 +25,11 @@ struct Runtime {
     mustela::PrivacyPolicy policy;
     mustela::Blocklist blocklist;
     std::unique_ptr<mustela::BookmarkStore> bookmarks;
+    // Per-site overrides (config_dir/sites.toml), shared with the GTK build.
+    std::unique_ptr<mustela::SiteRules> site_rules;
+    // Path of the store above, handed to CEF subprocesses via a command-line
+    // switch so the render process can resolve per-site fingerprint rules.
+    std::string site_rules_path;
 
     // Renders the start page into the profile root and returns its file URI.
     std::string start_page_uri(bool private_mode);
