@@ -139,11 +139,24 @@ jobs:
           Compress-Archive -Path build/bundle/* -DestinationPath build/kiwi-windows-x64.zip
           Get-Item build/kiwi-windows-x64.zip | Select-Object Name, Length
 
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          $ver = (Select-String -Path CMakeLists.txt -Pattern 'VERSION (\d+\.\d+\.\d+)').Matches[0].Groups[1].Value
+          & $iscc "/DKiwiVersion=$ver" packaging/windows/kiwi.iss
+          Get-Item build/kiwi-setup-x64.exe | Select-Object Name, Length
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: kiwi-windows-${{ github.sha }}
-          path: build/kiwi-windows-x64.zip
+          path: |
+            build/kiwi-windows-x64.zip
+            build/kiwi-setup-x64.exe
           if-no-files-found: error
 
   flatpak:

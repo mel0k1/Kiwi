@@ -1,6 +1,16 @@
 #include <gtk/gtk.h>
 #include <glib/gstdio.h>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <cstring>
 #include <memory>
 #include <string>
@@ -11,7 +21,27 @@
 #include "browser.hpp"
 #include "theme.hpp"
 
+#ifdef _WIN32
+// Installed and portable Windows runs ship a relocatable gdk-pixbuf loader
+// cache next to the executable. Point the loader at it before GTK init so a
+// Start-menu shortcut can launch kiwi.exe directly, without the .cmd wrapper.
+static void apply_windows_pixbuf_path() {
+    wchar_t exe[MAX_PATH];
+    if (GetModuleFileNameW(nullptr, exe, MAX_PATH) == 0) return;
+    std::wstring dir(exe);
+    size_t slash = dir.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return;
+    dir.resize(slash);
+    std::wstring cache = dir + L"\\lib\\gdk-pixbuf-2.0\\2.10.0\\loaders.cache";
+    if (GetFileAttributesW(cache.c_str()) == INVALID_FILE_ATTRIBUTES) return;
+    SetEnvironmentVariableW(L"GDK_PIXBUF_MODULE_FILE", cache.c_str());
+}
+#endif
+
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    apply_windows_pixbuf_path();
+#endif
     gtk_init(&argc, &argv);
 
     kiwi::apply_theme();
