@@ -852,6 +852,7 @@ GtkWidget* build_import_page(Browser& b) {
     g_prefs.import_status = status;
 
     GtkWidget* html_btn = gtk_button_new_with_label("Import from HTML file…");
+    g_signal_connect(html_btn, "clicked", G_CALLBACK(on_import_html), nullptr);
     GtkWidget* html_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     GtkWidget* html_hint = gtk_label_new(
         "Any browser can export bookmarks as HTML — Chrome, Edge and Firefox all do.");

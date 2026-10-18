@@ -262,12 +262,10 @@ std::string drop_url_from_selection(GtkSelectionData* data, guint info) {
     return std::string();
 }
 
-void on_tab_label_data_received(GtkWidget*, GdkDragContext* context, gint, gint,
+void on_tab_drop_received(GtkWidget*, GdkDragContext* context, gint, gint,
     GtkSelectionData* data, guint info, guint time, gpointer user_data) {
     KiwiTab* tab = static_cast<KiwiTab*>(user_data);
-    GtkWidget* label = tab ? tab->label : nullptr;
-    GtkWidget* source = gtk_drag_get_source_widget(context);
-    if (!tab || !browser || (source && source == label)) {
+    if (!browser) {
         gtk_drag_finish(context, FALSE, FALSE, time);
         return;
     }
@@ -276,37 +274,35 @@ void on_tab_label_data_received(GtkWidget*, GdkDragContext* context, gint, gint,
         gtk_drag_finish(context, FALSE, FALSE, time);
         return;
     }
-    tab->view->load_url(url);
+    if (tab) {
+        tab->view->load_url(url);
+    } else {
+        open_tab(*browser, url);
+    }
     refresh_chrome(*browser);
     gtk_drag_finish(context, TRUE, FALSE, time);
 }
 
-gboolean on_tab_label_drag_drop(GtkWidget* label, GdkDragContext* context, gint, gint,
-    guint time, gpointer) {
-    GtkTargetList* targets = gtk_drag_dest_get_target_list(label);
-    GdkAtom target = gtk_drag_dest_find_target(label, context, targets);
-    if (target == GDK_NONE) {
-        gtk_drag_finish(context, FALSE, FALSE, time);
-        return TRUE;
-    }
-    gtk_drag_get_data(label, context, target, time);
-    return TRUE;
+void wire_tab_drops(KiwiTab* tab) {
+    if (!tab || !tab->title_label) return;
+    GtkTargetEntry entries[] = {
+        {(gchar*)"text/uri-list", 0, TAB_DROP_URI_LIST},
+        {(gchar*)"UTF8_STRING", 0, TAB_DROP_TEXT},
+        {(gchar*)"text/plain;charset=utf-8", 0, TAB_DROP_TEXT}};
+    gtk_drag_dest_set(tab->title_label, GTK_DEST_DEFAULT_DROP, entries,
+        G_N_ELEMENTS(entries), static_cast<GdkDragAction>(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+    g_signal_connect(tab->title_label, "drag-data-received", G_CALLBACK(on_tab_drop_received), tab);
 }
 
-void wire_tab_drops(KiwiTab* tab) {
-    if (!tab || !tab->label) return;
-    GtkWidget* label = tab->label;
-    GtkTargetList* list = gtk_drag_dest_get_target_list(label);
-    if (!list) {
-        list = gtk_target_list_new(nullptr, 0);
-        gtk_drag_dest_set_target_list(label, list);
-        gtk_target_list_unref(list);
-    }
-    gtk_target_list_add(list, gdk_atom_intern("text/uri-list", FALSE), 0, TAB_DROP_URI_LIST);
-    gtk_target_list_add(list, gdk_atom_intern("UTF8_STRING", FALSE), 0, TAB_DROP_TEXT);
-    gtk_target_list_add(list, gdk_atom_intern("text/plain;charset=utf-8", FALSE), 0, TAB_DROP_TEXT);
-    g_signal_connect(label, "drag-drop", G_CALLBACK(on_tab_label_drag_drop), tab);
-    g_signal_connect(label, "drag-data-received", G_CALLBACK(on_tab_label_data_received), tab);
+void wire_notebook_drops(GtkWidget* notebook) {
+    if (!notebook) return;
+    GtkTargetEntry entries[] = {
+        {(gchar*)"text/uri-list", 0, TAB_DROP_URI_LIST},
+        {(gchar*)"UTF8_STRING", 0, TAB_DROP_TEXT},
+        {(gchar*)"text/plain;charset=utf-8", 0, TAB_DROP_TEXT}};
+    gtk_drag_dest_set(notebook, GTK_DEST_DEFAULT_DROP, entries,
+        G_N_ELEMENTS(entries), static_cast<GdkDragAction>(GDK_ACTION_COPY | GDK_ACTION_MOVE));
+    g_signal_connect(notebook, "drag-data-received", G_CALLBACK(on_tab_drop_received), nullptr);
 }
 
 void update_window_title(Browser& b) {
@@ -972,6 +968,7 @@ void build_browser_ui(Browser& b, const char* startup_url) {
     b.notebook = gtk_notebook_new();
     gtk_notebook_set_scrollable(GTK_NOTEBOOK(b.notebook), TRUE);
     gtk_notebook_set_show_tabs(GTK_NOTEBOOK(b.notebook), FALSE);
+    wire_notebook_drops(b.notebook);
 
     GtkWidget* layout = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_box_pack_start(GTK_BOX(layout), toolbar, FALSE, FALSE, 0);
