@@ -1,10 +1,10 @@
 #include "diagnostics.hpp"
 
-#include <glib/gstdio.h>
-
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <string>
+#include <system_error>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -19,18 +19,60 @@
 
 namespace kiwi {
 
-std::string diagnostics_dir() {
-    std::string path;
-    const gchar* base = g_get_user_config_dir();
-    if (base) path = std::string(base) + G_DIR_SEPARATOR_S "kiwi";
-    if (!path.empty()) g_mkdir_with_parents(path.c_str(), 0700);
-    return path;
-}
-
 namespace {
 
+#ifdef _WIN32
+
+std::string env_utf8(const wchar_t* name) {
+    wchar_t buffer[MAX_PATH * 2];
+    DWORD size = GetEnvironmentVariableW(name, buffer, MAX_PATH * 2);
+    if (size == 0 || size > MAX_PATH * 2) return std::string();
+    int utf8 = WideCharToMultiByte(CP_UTF8, 0, buffer, static_cast<int>(size),
+        nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<size_t>(utf8), '\0');
+    if (utf8 > 0) {
+        WideCharToMultiByte(CP_UTF8, 0, buffer, static_cast<int>(size),
+            out.data(), utf8, nullptr, nullptr);
+        while (!out.empty() && out.back() == '\0') out.pop_back();
+    }
+    return out;
+}
+
+std::string base_config_dir() {
+    std::string base = env_utf8(L"LOCALAPPDATA");
+    if (base.empty()) {
+        base = env_utf8(L"USERPROFILE");
+        if (!base.empty()) base += "\\AppData\\Local";
+    }
+    if (base.empty()) base = ".";
+    return base + "\\kiwi";
+}
+
+std::wstring to_wide_path(const std::string& path) {
+    int size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), static_cast<int>(path.size()),
+        nullptr, 0);
+    std::wstring wide(static_cast<size_t>(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), static_cast<int>(path.size()),
+        wide.data(), size);
+    return wide;
+}
+
+#else
+
+std::string base_config_dir() {
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    std::string base = xdg && *xdg ? std::string(xdg) : std::string();
+    if (base.empty()) {
+        const char* home = std::getenv("HOME");
+        base = home && *home ? std::string(home) + "/.config" : std::string(".");
+    }
+    return base + "/kiwi";
+}
+
+#endif
+
 void append_line(const std::string& path, const std::string& line) {
-    FILE* file = g_fopen(path.c_str(), "ab");
+    FILE* file = std::fopen(path.c_str(), "ab");
     if (!file) return;
     std::time_t now = std::time(nullptr);
     char stamp[32];
@@ -47,18 +89,19 @@ void append_line(const std::string& path, const std::string& line) {
 
 }  // namespace
 
+std::string diagnostics_dir() {
+    static std::string cached;
+    if (!cached.empty()) return cached;
+    std::string path = base_config_dir();
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    cached = path;
+    return cached;
+}
+
 #ifdef _WIN32
 
 namespace {
-
-std::wstring to_wide_path(const std::string& path) {
-    int size = MultiByteToWideChar(CP_UTF8, 0, path.c_str(), static_cast<int>(path.size()),
-        nullptr, 0);
-    std::wstring wide(static_cast<size_t>(size), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), static_cast<int>(path.size()),
-        wide.data(), size);
-    return wide;
-}
 
 std::string module_name_for(void* address) {
     HMODULE module = nullptr;
@@ -94,13 +137,12 @@ LONG WINAPI kiwi_unhandled_exception(EXCEPTION_POINTERS* info) {
         line += suffix;
     }
     std::string dir = diagnostics_dir();
-    append_line(dir + G_DIR_SEPARATOR_S "crash.log", line);
+    append_line(dir + "/crash.log", line);
 
-    // Best-effort minidump for post-mortem analysis; failures are fine.
     if (info) {
         HANDLE process = GetCurrentProcess();
         HANDLE file = CreateFileW(
-            to_wide_path(dir + G_DIR_SEPARATOR_S "crash.dmp").c_str(),
+            to_wide_path(dir + "/crash.dmp").c_str(),
             GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file != INVALID_HANDLE_VALUE) {
             MINIDUMP_EXCEPTION_INFORMATION dump_info;
@@ -115,53 +157,16 @@ LONG WINAPI kiwi_unhandled_exception(EXCEPTION_POINTERS* info) {
     return EXCEPTION_EXECUTE_HANDLER;
 }
 
-void gtk_log_to_file(const gchar* log_domain, GLogLevelFlags level, const gchar* message,
-                     gpointer) {
-    (void)level;
-    std::string line = std::string(log_domain ? log_domain : "gtk") + ": " + message;
-    append_line(diagnostics_dir() + G_DIR_SEPARATOR_S "kiwi.log", line);
-}
-
 }  // namespace
 
 void install_crash_handler() {
     SetUnhandledExceptionFilter(kiwi_unhandled_exception);
 }
 
-void install_gtk_log_file() {
-    // Fatal + critical only: warnings are too noisy for a user machine.
-    g_log_set_handler(nullptr, static_cast<GLogLevelFlags>(G_LOG_LEVEL_ERROR
-            | G_LOG_LEVEL_CRITICAL | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION),
-        gtk_log_to_file, nullptr);
-    g_log_set_handler("Gtk", static_cast<GLogLevelFlags>(G_LOG_LEVEL_ERROR
-            | G_LOG_LEVEL_CRITICAL | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION),
-        gtk_log_to_file, nullptr);
-    g_log_set_handler("GLib-GObject", static_cast<GLogLevelFlags>(G_LOG_LEVEL_ERROR
-            | G_LOG_LEVEL_CRITICAL | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION),
-        gtk_log_to_file, nullptr);
-}
-
 #else
-
-namespace {
-
-void gtk_log_to_file(const gchar* log_domain, GLogLevelFlags level, const gchar* message,
-                     gpointer) {
-    (void)level;
-    std::string line = std::string(log_domain ? log_domain : "gtk") + ": " + message;
-    append_line(diagnostics_dir() + G_DIR_SEPARATOR_S "kiwi.log", line);
-}
-
-}  // namespace
 
 void install_crash_handler() {}
 
-void install_gtk_log_file() {
-    g_log_set_handler(nullptr, static_cast<GLogLevelFlags>(G_LOG_LEVEL_ERROR
-            | G_LOG_LEVEL_CRITICAL | G_LOG_FLAG_FATAL | G_LOG_FLAG_RECURSION),
-        gtk_log_to_file, nullptr);
-}
-
 #endif
 
-}  // namespace kiwi
+}

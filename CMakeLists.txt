@@ -1,9 +1,18 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.21)
 
 project(kiwi
-    VERSION 0.10.0
-    DESCRIPTION "Privacy-first web browser powered by the Mustela engine"
-    LANGUAGES CXX)
+    VERSION 0.11.0
+    DESCRIPTION "Privacy-first web browser"
+    LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+option(KIWI_WITH_CEF "Build the Windows shell on CEF instead of GTK + the Mustela view" OFF)
+if(KIWI_WITH_CEF)
+    include(cmake/kiwi-cef.cmake)
+    return()
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -57,7 +66,8 @@ add_executable(kiwi
     src/updater.cpp
     src/icons.cpp
     src/start_page.cpp
-    src/diagnostics.cpp)
+    src/diagnostics.cpp
+    src/diagnostics_gtk.cpp)
 
 if(WIN32)
     target_sources(kiwi PRIVATE src/viewhost_win.cpp)

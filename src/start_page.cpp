@@ -1,10 +1,10 @@
 #include "start_page.hpp"
 
-#include <glib/gstdio.h>
-
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
+#include <system_error>
 
 namespace kiwi {
 
@@ -298,17 +298,31 @@ document.getElementById("go").addEventListener("submit", function(event) {
     std::string path = profile_root;
     if (!path.empty() && path.back() != '/' && path.back() != '\\') path += "/";
     path += "start.html";
-    g_mkdir_with_parents(profile_root.c_str(), 0700);
-    FILE* file = g_fopen(path.c_str(), "wb");
+    std::error_code ec;
+    std::filesystem::create_directories(profile_root, ec);
+    FILE* file = std::fopen(path.c_str(), "wb");
     if (!file) return std::string();
     size_t written = fwrite(html.data(), 1, html.size(), file);
     fclose(file);
     if (written != html.size()) return std::string();
 
-    // file URI with forward slashes; percent-encode spaces for GLib/Webkit.
-    char* uri = g_filename_to_uri(path.c_str(), nullptr, nullptr);
-    std::string out = uri ? uri : std::string();
-    g_free(uri);
+    for (char& c : path) {
+        if (c == '\\') c = '/';
+    }
+    if (path.empty()) return std::string();
+    if (path.front() != '/') path = "/" + path;
+    std::string out = "file://";
+    static const char hex[] = "0123456789ABCDEF";
+    for (unsigned char c : path) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+            || c == '/' || c == ':' || c == '.' || c == '-' || c == '_' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0x0F];
+        }
+    }
     return out;
 }
 
