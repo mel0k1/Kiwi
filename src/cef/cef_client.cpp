@@ -334,11 +334,13 @@ bool KiwiClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
             case 'R': key = HK_RELOAD; break;
             case 'D': key = HK_BOOKMARK; break;
             case 'F': key = HK_FIND; break;
+            case VK_OEM_COMMA: key = HK_SETTINGS; break;
             default: break;
         }
     } else if (ctrl && shift && !alt) {
         if (event.windows_key_code == 'P') key = HK_PRIVATE_TAB;
         if (event.windows_key_code == 'I') key = HK_DEVTOOLS;
+        if (event.windows_key_code == 'O') key = HK_BOOKMARKS_WINDOW;
     } else if (shift && !ctrl && !alt) {
         if (event.windows_key_code == kVkF3) key = HK_FIND_PREV;
     } else if (alt && !ctrl && !shift) {

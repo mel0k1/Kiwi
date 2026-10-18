@@ -5,6 +5,9 @@
 #include "../cef_client.hpp"
 #include "../cef_runtime.hpp"
 #include "../../start_page.hpp"
+#include "../../style_store.hpp"
+#include "bookmarks_win.hpp"
+#include "settings_win.hpp"
 #include "site_rules_win.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -65,7 +68,8 @@ enum ControlId {
     ID_FIND_NEXT,
     ID_FIND_CLOSE,
     ID_FIND_LABEL,
-    ID_SITERULES
+    ID_BOOKMARKS,
+    ID_SETTINGS
 };
 
 struct WinTab {
@@ -211,7 +215,7 @@ void draw_glyph(HDC dc, const RECT& rect, ControlId id, bool enabled, bool press
             MoveToEx(dc, cx + 3, cy - 3, nullptr);
             LineTo(dc, cx - 3, cy + 3);
             break;
-        case ID_SITERULES: {
+        case ID_SETTINGS: {
             // Gear: ring + four spokes + hub.
             Arc(dc, cx - r, cy - r, cx + r, cy + r, cx + r, cy, cx, cy + r);
             Arc(dc, cx - r, cy - r, cx + r, cy + r, cx, cy - r, cx + r, cy);
@@ -231,6 +235,25 @@ void draw_glyph(HDC dc, const RECT& rect, ControlId id, bool enabled, bool press
             Ellipse(dc, cx - 2, cy - 2, cx + 2, cy + 2);
             SelectObject(dc, old);
             DeleteObject(hub);
+            break;
+        }
+        case ID_BOOKMARKS: {
+            // Five-point star, deterministic cos/sin (no libm dependency).
+            const double kCos[10] = {0.000000, 0.587785, 0.951057, 0.951057,
+                                     0.587785, 0.000000, -0.587785, -0.951057,
+                                     -0.951057, -0.587785};
+            const double kSin[10] = {-1.000000, -0.809017, -0.309017, 0.309017,
+                                     0.809017, 1.000000, 0.809017, 0.309017,
+                                     -0.309017, -0.809017};
+            POINT star[11];
+            const double kr = r + 2;
+            for (int i = 0; i < 10; ++i) {
+                double rad = (i % 2 == 0) ? kr : kr * 0.45;
+                star[i].x = cx + static_cast<int>(rad * kCos[i]);
+                star[i].y = cy + static_cast<int>(rad * kSin[i]);
+            }
+            star[10] = star[0];
+            Polyline(dc, star, 11);
             break;
         }
         default:
@@ -264,6 +287,10 @@ private:
     void create_controls();
     void layout();
     void on_command(WPARAM wparam, LPARAM lparam);
+    void open_in_new_tab(const std::string& url);
+    void create_tab_strip();
+    void recreate_tab_strip();
+    bool zen_style() const { return style_ == "zen"; }
     void on_draw_item(WPARAM wparam, LPARAM lparam);
     void draw_tab_item(HDC dc, int item_id, const RECT& rect, bool selected);
     RECT tab_close_rect(const RECT& item_rect) const;
@@ -309,7 +336,7 @@ private:
     HWND host_ = nullptr;
     HWND omnibox_ = nullptr;
     HWND status_ = nullptr;
-    HWND buttons_[6] = {};
+    HWND buttons_[7] = {};
     HFONT font_ = nullptr;
 
     HWND find_bar_ = nullptr;
@@ -320,6 +347,8 @@ private:
     HWND find_label_ = nullptr;
     bool find_visible_ = false;
     int find_seq_ = 0;
+
+    std::string style_ = "classic";
 
     int hover_item_ = -1;
     bool hover_close_ = false;
@@ -400,16 +429,73 @@ bool CefShell::create_window() {
         FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
+    Runtime* rt_style = runtime();
+    style_ = kiwi::load_shell_style(rt_style ? rt_style->config_dir : std::string());
+
     create_controls();
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
     return true;
 }
 
+void CefShell::open_in_new_tab(const std::string& url) {
+    if (url.empty()) return;
+    int index = add_tab(url, false);
+    activate_index(index);
+    ShowWindow(hwnd_, SW_RESTORE);
+    SetForegroundWindow(hwnd_);
+}
+
+void CefShell::recreate_tab_strip() {
+    if (!tab_ctrl_) return;
+    // Remember tab titles so the new strip can be repopulated 1:1.
+    std::vector<std::wstring> titles;
+    for (size_t i = 0; i < tabs_.size(); ++i) {
+        wchar_t text[256] = {};
+        TCITEMW info = {};
+        info.mask = TCIF_TEXT;
+        info.pszText = text;
+        info.cchTextMax = 256;
+        SendMessageW(tab_ctrl_, TCM_GETITEMW, static_cast<WPARAM>(i),
+            reinterpret_cast<LPARAM>(&info));
+        titles.push_back(text);
+    }
+    int selected = static_cast<int>(SendMessageW(tab_ctrl_, TCM_GETCURSEL, 0, 0));
+    DestroyWindow(tab_ctrl_);
+    tab_ctrl_ = nullptr;
+    create_tab_strip();
+    for (size_t i = 0; i < titles.size(); ++i) {
+        TCITEMW item = {};
+        item.mask = TCIF_TEXT;
+        item.pszText = titles[i].empty()
+            ? const_cast<LPWSTR>(L"New tab") : titles[i].data();
+        SendMessageW(tab_ctrl_, TCM_INSERTITEMW, static_cast<WPARAM>(i),
+            reinterpret_cast<LPARAM>(&item));
+    }
+    if (selected >= 0 && selected < static_cast<int>(titles.size())) {
+        SendMessageW(tab_ctrl_, TCM_SETCURSEL, selected, 0);
+    }
+    layout();
+}
+
+void CefShell::create_tab_strip() {
+    DWORD style = WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS
+        | TCS_SINGLELINE | TCS_OWNERDRAWFIXED;
+    if (zen_style()) style |= TCS_VERTICAL | TCS_RIGHT;
+    tab_ctrl_ = CreateWindowExW(0, WC_TABCONTROLW, nullptr, style,
+        0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TABS)),
+        GetModuleHandleW(nullptr), nullptr);
+    SetWindowSubclass(tab_ctrl_, tab_ctrl_proc, 1,
+        reinterpret_cast<DWORD_PTR>(this));
+    SendMessageW(tab_ctrl_, TCM_SETPADDING, 0,
+        MAKELPARAM(MulDiv(16, dpi_for(hwnd_), 96), MulDiv(4, dpi_for(hwnd_), 96)));
+    SendMessageW(tab_ctrl_, WM_SETFONT, (WPARAM)font_, TRUE);
+}
+
 void CefShell::create_controls() {
-    const ControlId ids[6] = {ID_BACK, ID_FORWARD, ID_RELOAD, ID_NEW_TAB, ID_CLOSE_TAB,
-        ID_SITERULES};
-    for (int i = 0; i < 6; ++i) {
+    const ControlId ids[7] = {ID_BACK, ID_FORWARD, ID_RELOAD, ID_NEW_TAB, ID_CLOSE_TAB,
+        ID_BOOKMARKS, ID_SETTINGS};
+    for (int i = 0; i < 7; ++i) {
         buttons_[i] = CreateWindowExW(0, L"BUTTON", nullptr,
             WS_CHILD | WS_VISIBLE | BS_OWNERDRAW | WS_TABSTOP,
             0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ids[i])),
@@ -424,15 +510,7 @@ void CefShell::create_controls() {
     SendMessageW(omnibox_, EM_SETCUEBANNER, TRUE,
         reinterpret_cast<LPARAM>(L"Search or enter address"));
 
-    tab_ctrl_ = CreateWindowExW(0, WC_TABCONTROLW, nullptr,
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | TCS_TABS | TCS_SINGLELINE | TCS_OWNERDRAWFIXED,
-        0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_TABS)),
-        GetModuleHandleW(nullptr), nullptr);
-    SetWindowSubclass(tab_ctrl_, tab_ctrl_proc, 1, reinterpret_cast<DWORD_PTR>(this));
-    // Extra horizontal padding reserves the right side of every tab for the
-    // per-tab close button drawn in WM_DRAWITEM.
-    SendMessageW(tab_ctrl_, TCM_SETPADDING, 0,
-        MAKELPARAM(MulDiv(16, dpi_for(hwnd_), 96), MulDiv(4, dpi_for(hwnd_), 96)));
+    create_tab_strip();
 
     host_ = CreateWindowExW(0, L"STATIC", nullptr,
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
@@ -444,9 +522,8 @@ void CefShell::create_controls() {
         0, 0, 10, 10, hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_STATUS)),
         GetModuleHandleW(nullptr), nullptr);
 
-    for (int i = 0; i < 6; ++i) SendMessageW(buttons_[i], WM_SETFONT, (WPARAM)font_, TRUE);
+    for (int i = 0; i < 7; ++i) SendMessageW(buttons_[i], WM_SETFONT, (WPARAM)font_, TRUE);
     SendMessageW(omnibox_, WM_SETFONT, (WPARAM)font_, TRUE);
-    SendMessageW(tab_ctrl_, WM_SETFONT, (WPARAM)font_, TRUE);
     SendMessageW(status_, WM_SETFONT, (WPARAM)font_, TRUE);
 
     // Find-in-page bar: hidden until Ctrl+F.
@@ -702,8 +779,20 @@ void CefShell::on_command(WPARAM wparam, LPARAM lparam) {
         case ID_CLOSE_TAB:
             on_hotkey(HK_CLOSE_TAB);
             break;
-        case ID_SITERULES:
-            open_site_rules_dialog(hwnd_);
+        case ID_BOOKMARKS:
+            open_bookmarks_manager(hwnd_, [this](const std::string& url) {
+                open_in_new_tab(url);
+            });
+            break;
+        case ID_SETTINGS:
+            open_settings_window(hwnd_, [this]() {
+                style_ = runtime() ? runtime()->config_dir.empty()
+                                         ? std::string("classic")
+                                         : kiwi::load_shell_style(runtime()->config_dir)
+                                   : std::string("classic");
+                recreate_tab_strip();
+                layout();
+            });
             break;
         case ID_FIND_ENTRY:
             if (HIWORD(wparam) == EN_CHANGE) on_find_entry_changed();
@@ -1096,18 +1185,46 @@ void CefShell::layout() {
     int btn = MulDiv(34, dpi, 96);
     int omni_h = MulDiv(28, dpi, 96);
 
-    MoveWindow(tab_ctrl_, 0, 0, width, tab_h, TRUE);
-    int x = pad;
-    int tool_y = tab_h + (tool_h - btn) / 2;
-    for (int i = 0; i < 6; ++i) {
-        MoveWindow(buttons_[i], x, tool_y, btn, btn, TRUE);
-        x += btn + pad;
-    }
-    int omni_w = width - x - pad;
-    if (omni_w < 50) omni_w = 50;
-    MoveWindow(omnibox_, x, tab_h + (tool_h - omni_h) / 2, omni_w, omni_h, TRUE);
+    // Browser view geometry, computed after the chrome rows below.
+    int host_x = 0;
+    int host_y = 0;
+    int host_w = width;
+    int host_h = 0;
 
-    int host_y = tab_h + tool_h;
+    if (zen_style()) {
+        // Zen-like: a vertical tab rail on the left, toolbar row on top.
+        int rail_w = MulDiv(190, dpi, 96);
+        if (tabs_.empty()) rail_w = 0;
+        MoveWindow(tab_ctrl_, 0, tool_h, rail_w, height - tool_h - status_h, TRUE);
+        int x = pad;
+        int tool_y = (tool_h - btn) / 2;
+        for (int i = 0; i < 7; ++i) {
+            MoveWindow(buttons_[i], x, tool_y, btn, btn, TRUE);
+            x += btn + pad;
+        }
+        int omni_w = width - x - pad;
+        if (omni_w < 50) omni_w = 50;
+        MoveWindow(omnibox_, x, (tool_h - omni_h) / 2, omni_w, omni_h, TRUE);
+
+        host_x = rail_w;
+        host_y = tool_h;
+        host_w = width - rail_w;
+    } else {
+        MoveWindow(tab_ctrl_, 0, 0, width, tab_h, TRUE);
+        int x = pad;
+        int tool_y = tab_h + (tool_h - btn) / 2;
+        for (int i = 0; i < 7; ++i) {
+            MoveWindow(buttons_[i], x, tool_y, btn, btn, TRUE);
+            x += btn + pad;
+        }
+        int omni_w = width - x - pad;
+        if (omni_w < 50) omni_w = 50;
+        MoveWindow(omnibox_, x, tab_h + (tool_h - omni_h) / 2, omni_w, omni_h, TRUE);
+        host_x = 0;
+        host_y = tab_h + tool_h;
+        host_w = width;
+    }
+
     if (find_visible_) {
         int find_h = MulDiv(34, dpi, 96);
         int btn_w = MulDiv(28, dpi, 96);
@@ -1126,15 +1243,17 @@ void CefShell::layout() {
         MoveWindow(find_close_, x_close, host_y + (find_h - btn_w) / 2, btn_w, btn_w, TRUE);
         host_y += find_h;
     }
-    int host_h = height - host_y - status_h;
-    MoveWindow(host_, 0, host_y, width, host_h > 0 ? host_h : 0, TRUE);
+    host_h = height - host_y - status_h;
+    MoveWindow(host_, host_x, host_y, host_w > 0 ? host_w : 0,
+        host_h > 0 ? host_h : 0, TRUE);
     MoveWindow(status_, 0, height - status_h, width, status_h, TRUE);
 
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i) {
         if (!tabs_[i].browser) continue;
         HWND browser_hwnd = tabs_[i].browser->GetHost()->GetWindowHandle();
         if (i == active_) {
-            MoveWindow(browser_hwnd, 0, 0, width, host_h > 0 ? host_h : 0, TRUE);
+            MoveWindow(browser_hwnd, 0, 0, host_w > 0 ? host_w : 0,
+                host_h > 0 ? host_h : 0, TRUE);
             ShowWindow(browser_hwnd, SW_SHOW);
         } else {
             ShowWindow(browser_hwnd, SW_HIDE);
@@ -1275,6 +1394,19 @@ void CefShell::on_hotkey(Hotkey key) {
             break;
         case HK_DEVTOOLS:
             toggle_devtools();
+            break;
+        case HK_BOOKMARKS_WINDOW:
+            open_bookmarks_manager(hwnd_, [this](const std::string& url) {
+                open_in_new_tab(url);
+            });
+            break;
+        case HK_SETTINGS:
+            open_settings_window(hwnd_, [this]() {
+                Runtime* rt = runtime();
+                style_ = kiwi::load_shell_style(rt ? rt->config_dir : std::string());
+                recreate_tab_strip();
+                layout();
+            });
             break;
         case HK_BACK: {
             if (CefRefPtr<CefBrowser> browser = active_browser()) browser->GoBack();

@@ -19,7 +19,9 @@ enum Hotkey {
     HK_FIND,
     HK_FIND_NEXT,
     HK_FIND_PREV,
-    HK_DEVTOOLS
+    HK_DEVTOOLS,
+    HK_BOOKMARKS_WINDOW,
+    HK_SETTINGS
 };
 
 // Shell-facing callbacks the CEF client forwards. Every method runs on the

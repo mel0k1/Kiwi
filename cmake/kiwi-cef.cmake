@@ -36,8 +36,11 @@ add_library(kiwi SHARED
     src/cef/cef_runtime.cpp
     src/cef/win/cef_main_win.cpp
     src/cef/win/cef_shell_win.cpp
+    src/cef/win/bookmarks_win.cpp
+    src/cef/win/settings_win.cpp
     src/cef/win/site_rules_win.cpp
     src/start_page.cpp
+    src/style_store.cpp
     src/diagnostics.cpp)
 
 # Sandbox model since CEF 138: the client is a DLL exporting RunWinMain,
