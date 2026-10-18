@@ -1,8 +1,11 @@
 #include "settings_win.hpp"
 
 #include "../cef_runtime.hpp"
+#include "cef_shell_win.hpp"
 #include "../../style_store.hpp"
+#include "history_win.hpp"
 #include "site_rules_win.hpp"
+#include "updater_win.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -38,6 +41,8 @@ enum {
     ID_FP_CANVAS,
     ID_PRIVATE,
     ID_SITERULES,
+    ID_HISTORY,
+    ID_UPDATE,
     ID_SAVE,
     ID_CLOSEWIN,
 };
@@ -214,6 +219,21 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 open_site_rules_dialog(st->hwnd);
                 return 0;
             }
+            if (id == ID_HISTORY) {
+                Runtime* rt = runtime();
+                if (rt) {
+                    // The history window lives in the shell; opening it from
+                    // settings detaches ownership by asking the shell via its
+                    // owned-window lookup (same top-level owner).
+                    open_history_window(shell_main_hwnd(),
+                        [](const std::string& url) { shell_open_url(url); });
+                }
+                return 0;
+            }
+            if (id == ID_UPDATE) {
+                check_for_updates(hwnd);
+                return 0;
+            }
             return 0;
         }
         default:
@@ -318,12 +338,19 @@ void open_settings_window(HWND owner, std::function<void()> on_style_changed) {
     make_control(st->hwnd, L"BUTTON", L"Per-site rules...",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, (HMENU)(intptr_t)ID_SITERULES,
         x0, y, bw, 26, font);
+    make_control(st->hwnd, L"BUTTON", L"Browsing history...",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP, (HMENU)(intptr_t)ID_HISTORY,
+        x0 + bw + 8, y, bw, 26, font);
+    make_control(st->hwnd, L"BUTTON", L"Check for updates...",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP, (HMENU)(intptr_t)ID_UPDATE,
+        x0 + (bw + 8) * 2, y, bw + 20, 26, font);
+    y += 32;
     make_control(st->hwnd, L"BUTTON", L"Save",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, (HMENU)(intptr_t)ID_SAVE,
-        x0 + bw + 8, y, bw, 26, font);
+        x0, y, bw, 26, font);
     make_control(st->hwnd, L"BUTTON", L"Close",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP, (HMENU)(intptr_t)ID_CLOSEWIN,
-        x0 + (bw + 8) * 2, y, bw, 26, font);
+        x0 + bw + 8, y, bw, 26, font);
 
     load_into_controls(st);
     ShowWindow(st->hwnd, SW_SHOW);

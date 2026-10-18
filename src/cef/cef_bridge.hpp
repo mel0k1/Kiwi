@@ -21,6 +21,7 @@ enum Hotkey {
     HK_FIND_PREV,
     HK_DEVTOOLS,
     HK_BOOKMARKS_WINDOW,
+    HK_HISTORY_WINDOW,
     HK_SETTINGS
 };
 

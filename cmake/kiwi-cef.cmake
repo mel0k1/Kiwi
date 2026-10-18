@@ -37,8 +37,10 @@ add_library(kiwi SHARED
     src/cef/win/cef_main_win.cpp
     src/cef/win/cef_shell_win.cpp
     src/cef/win/bookmarks_win.cpp
+    src/cef/win/history_win.cpp
     src/cef/win/settings_win.cpp
     src/cef/win/site_rules_win.cpp
+    src/cef/win/updater_win.cpp
     src/start_page.cpp
     src/style_store.cpp
     src/diagnostics.cpp)

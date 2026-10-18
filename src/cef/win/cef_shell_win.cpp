@@ -4,9 +4,11 @@
 #include "../cef_bridge.hpp"
 #include "../cef_client.hpp"
 #include "../cef_runtime.hpp"
+#include "session.hpp"
 #include "../../start_page.hpp"
 #include "../../style_store.hpp"
 #include "bookmarks_win.hpp"
+#include "history_win.hpp"
 #include "settings_win.hpp"
 #include "site_rules_win.hpp"
 
@@ -272,6 +274,8 @@ public:
     int exec();
     void store_geometry();
     void set_self_test(bool enabled) { self_test_ = enabled; }
+    HWND main_hwnd() const { return hwnd_; }
+    void open_in_new_tab(const std::string& url);
 
 private:
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -287,9 +291,10 @@ private:
     void create_controls();
     void layout();
     void on_command(WPARAM wparam, LPARAM lparam);
-    void open_in_new_tab(const std::string& url);
     void create_tab_strip();
     void recreate_tab_strip();
+    void save_session_now();
+    bool restore_session();
     bool zen_style() const { return style_ == "zen"; }
     void on_draw_item(WPARAM wparam, LPARAM lparam);
     void draw_tab_item(HDC dc, int item_id, const RECT& rect, bool selected);
@@ -362,16 +367,22 @@ private:
     CefRefPtr<DevToolsClient> devtools_client_ = new DevToolsClient();
 };
 
+CefShell* g_shell = nullptr;
+
 int CefShell::exec() {
     trace_stage("shell: create_window begin");
     if (!create_window()) {
         trace_stage("shell: create_window FAILED");
         return 1;
     }
-    trace_stage("shell: create_window ok, adding first tab");
-    add_tab(start_uri(false), false);
-    trace_stage("shell: first tab submitted");
-    activate_index(0);
+    trace_stage("shell: create_window ok, opening first tab");
+    if (!restore_session()) {
+        add_tab(start_uri(false), false);
+        trace_stage("shell: first tab submitted");
+        activate_index(0);
+    } else {
+        trace_stage("shell: session restored");
+    }
     if (self_test_) start_self_test_watchdog();
     trace_stage("shell: entering message loop");
     CefRunMessageLoop();
@@ -608,6 +619,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             return self->on_notify(lparam);
         case WM_CLOSE:
             self->store_geometry();
+            self->save_session_now();
             self->closing_ = true;
             for (WinTab& tab : self->tabs_) {
                 if (tab.browser) tab.browser->GetHost()->CloseBrowser(false);
@@ -1285,6 +1297,7 @@ void CefShell::on_closed(int browser_id) {
     SendMessageW(tab_ctrl_, TCM_DELETEITEM, index, 0);
     if (tabs_.empty()) {
         active_ = -1;
+        save_session_now();
         DestroyWindow(hwnd_);  // closing the last tab closes the browser
         return;
     }
@@ -1321,9 +1334,53 @@ void CefShell::on_address(int browser_id, const std::string& url) {
 }
 
 void CefShell::on_loading(int browser_id, bool loading) {
-    (void)browser_id;
-    (void)loading;
     update_toolbar();
+    if (loading) return;
+    // Load finished: record a history visit (never for private tabs, the
+    // start page, or when history is disabled by the privacy policy).
+    WinTab* tab = tab_by_id(browser_id);
+    Runtime* rt = runtime();
+    if (!tab || !rt || !rt->history) return;
+    if (!rt->settings.history_enabled || tab->private_tab) return;
+    if (tab->url.empty() || is_start_page_entry(tab->url)) return;
+    rt->history->record(tab->url, tab->title, std::time(nullptr));
+}
+
+void CefShell::save_session_now() {
+    Runtime* rt = runtime();
+    if (!rt || !rt->settings.session_restore) return;
+    mustela::SessionData data;
+    data.active = active_;
+    for (const WinTab& tab : tabs_) {
+        mustela::SessionTab entry;
+        entry.url = tab.url;
+        entry.title = tab.title;
+        data.tabs.push_back(std::move(entry));
+    }
+    mustela::save_session(rt->profile_root + "/session.toml", data);
+}
+
+bool CefShell::restore_session() {
+    Runtime* rt = runtime();
+    if (!rt || !rt->settings.session_restore) return false;
+    mustela::SessionData data;
+    if (!mustela::load_session(rt->profile_root + "/session.toml", data)) return false;
+    if (data.tabs.empty()) return false;
+    for (const mustela::SessionTab& entry : data.tabs) {
+        if (entry.url.empty() || is_start_page_entry(entry.url)) {
+            add_tab(start_uri(false), false);
+        } else {
+            add_tab(entry.url, false);
+            tabs_.back().title = entry.title;
+        }
+    }
+    int first = 0;
+    if (data.active >= 0 && data.active < static_cast<int>(tabs_.size())) {
+        first = data.active;
+    }
+    activate_index(first);
+    sync_tab_labels();
+    return true;
 }
 
 void CefShell::on_status(int browser_id, const std::string& text) {
@@ -1400,6 +1457,11 @@ void CefShell::on_hotkey(Hotkey key) {
                 open_in_new_tab(url);
             });
             break;
+        case HK_HISTORY_WINDOW:
+            open_history_window(hwnd_, [this](const std::string& url) {
+                open_in_new_tab(url);
+            });
+            break;
         case HK_SETTINGS:
             open_settings_window(hwnd_, [this]() {
                 Runtime* rt = runtime();
@@ -1423,13 +1485,24 @@ void CefShell::on_hotkey(Hotkey key) {
 }
 
 int cef_shell_main(bool self_test) {
-    CefShell shell;
+    static CefShell shell;
+    g_shell = &shell;
     shell.set_self_test(self_test);
-    return shell.exec();
+    int result = shell.exec();
+    g_shell = nullptr;
+    return result;
 }
 
 int cef_self_test_exit_code() {
     return g_self_test_exit;
+}
+
+HWND shell_main_hwnd() {
+    return g_shell ? g_shell->main_hwnd() : nullptr;
+}
+
+void shell_open_url(const std::string& url) {
+    if (g_shell) g_shell->open_in_new_tab(url);
 }
 
 }

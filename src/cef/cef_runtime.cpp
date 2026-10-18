@@ -113,6 +113,7 @@ void runtime_init() {
         : rt->settings.downloads_dir;
 
     rt->bookmarks = std::make_unique<mustela::BookmarkStore>(profile.paths().bookmarks);
+    rt->history = std::make_unique<mustela::HistoryStore>(profile.paths().history);
 
     // Same store the GTK build uses: <config>/sites.toml. Create an empty
     // file on first run so the per-site editor and the render-process loader

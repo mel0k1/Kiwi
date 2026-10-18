@@ -341,6 +341,7 @@ bool KiwiClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
         if (event.windows_key_code == 'P') key = HK_PRIVATE_TAB;
         if (event.windows_key_code == 'I') key = HK_DEVTOOLS;
         if (event.windows_key_code == 'O') key = HK_BOOKMARKS_WINDOW;
+        if (event.windows_key_code == 'H') key = HK_HISTORY_WINDOW;
     } else if (shift && !ctrl && !alt) {
         if (event.windows_key_code == kVkF3) key = HK_FIND_PREV;
     } else if (alt && !ctrl && !shift) {

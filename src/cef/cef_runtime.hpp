@@ -25,6 +25,7 @@ struct Runtime {
     mustela::PrivacyPolicy policy;
     mustela::Blocklist blocklist;
     std::unique_ptr<mustela::BookmarkStore> bookmarks;
+    std::unique_ptr<mustela::HistoryStore> history;
     // Per-site overrides (config_dir/sites.toml), shared with the GTK build.
     std::unique_ptr<mustela::SiteRules> site_rules;
     // Path of the store above, handed to CEF subprocesses via a command-line
