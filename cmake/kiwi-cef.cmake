@@ -15,6 +15,9 @@ set(MUSTELA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(MUSTELA_BUILD_BENCH OFF CACHE BOOL "" FORCE)
 set(MUSTELA_BUILD_VIEW OFF CACHE BOOL "" FORCE)
 
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING
+    "CEF links the static CRT; every target in this tree must match" FORCE)
+
 include(FetchContent)
 FetchContent_Declare(mustela
     GIT_REPOSITORY https://github.com/mel0k1/Mustela.git
