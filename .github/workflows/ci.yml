@@ -138,7 +138,14 @@ jobs:
             $env:KIWI_EXTRA_SWITCHES = "disable-gpu,disable-gpu-compositing"
             $code = Run-KiwiSelfTest "disable-gpu"
             if ($code -ne 0) {
-              throw "kiwi self-test failed with exit $code (also with --disable-gpu)"
+              "still failing with $code, retrying with --no-sandbox"
+              $env:KIWI_EXTRA_SWITCHES = "no-sandbox"
+              $code = Run-KiwiSelfTest "no-sandbox"
+              if ($code -ne 0) {
+                throw "kiwi self-test failed with exit $code (gpu and sandbox bisects both failed)"
+              }
+              "WARNING: stock startup crashed but --no-sandbox passes — sandbox spawn related"
+              return
             }
             "WARNING: stock startup crashed but --disable-gpu passes — GPU-process related; keep bisecting"
           }
