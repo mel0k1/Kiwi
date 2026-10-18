@@ -43,7 +43,11 @@ const char* release_json =
     "{\"url\":\"https://api.github.com/assets/2\","
     "\"name\":\"source.tar.gz\","
     "\"browser_download_url\":\"https://github.com/mel0k1/Kiwi/archive/source.tar.gz\","
-    "\"size\":456}"
+    "\"size\":456},"
+    "{\"url\":\"https://api.github.com/assets/3\","
+    "\"name\":\"kiwi-0.6.0-windows-x64.zip\","
+    "\"browser_download_url\":\"https://github.com/mel0k1/Kiwi/releases/download/v0.6.0/kiwi-0.6.0-windows-x64.zip\","
+    "\"size\":7890123}"
     "]"
     "}";
 
@@ -84,11 +88,18 @@ int main() {
         }
         cursor = after;
     }
-    check(assets_seen == 2, "two assets parsed");
+    check(assets_seen == 3, "three assets parsed");
+#ifdef _WIN32
+    check(best_name == "kiwi-0.6.0-windows-x64.zip", "best asset name");
+    check(best_score == 2, "best asset score");
+    check(best_url.find("download/v0.6.0/kiwi-0.6.0-windows-x64.zip") != std::string::npos,
+        "best asset url");
+#else
     check(best_name == "kiwi_0.6.0_amd64.deb", "best asset name");
     check(best_score == 4, "best asset score");
     check(best_url.find("download/v0.6.0/kiwi_0.6.0_amd64.deb") != std::string::npos,
         "best asset url");
+#endif
 
     check(version_is_newer("v0.6.0", "0.5.0"), "0.6.0 newer than 0.5.0");
     check(version_is_newer("v0.5.1", "v0.5.0"), "0.5.1 newer than 0.5.0");
