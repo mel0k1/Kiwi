@@ -54,11 +54,12 @@ add_executable(kiwi
     src/screens.cpp
     src/prefs.cpp
     src/context_menu.cpp
-    src/updater.cpp
-    src/viewhost.cpp)
+    src/updater.cpp)
 
 if(WIN32)
     target_sources(kiwi PRIVATE src/viewhost_win.cpp)
+else()
+    target_sources(kiwi PRIVATE src/viewhost.cpp)
 endif()
 
 target_include_directories(kiwi PRIVATE
