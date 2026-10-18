@@ -49,7 +49,7 @@ cmake --build build
 ./build/kiwi
 ```
 
-Windows (Visual Studio 2022; CI-джоба `windows` гоняет ровно этот пайплайн и пакует zip + установщик):
+Windows (Visual Studio любой свежей версии; CI-джоба `windows` гоняет ровно этот пайплайн и пакует zip + установщик):
 
 ```powershell
 $cef = "152.0.14+g8a0b5b9+chromium-152.0.7977.167"
@@ -57,7 +57,7 @@ Invoke-WebRequest -Uri ("https://cef-builds.spotifycdn.com/" +
   [uri]::EscapeDataString("cef_binary_$cef" + "_windows64_minimal.tar.bz2")) -OutFile cef.tar.bz2
 tar -xf cef.tar.bz2
 Move-Item "cef_binary_*_windows64_minimal" cef-dist
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DKIWI_WITH_CEF=ON -DCEF_ROOT="$PWD/cef-dist"
+cmake -S . -B build -A x64 -DKIWI_WITH_CEF=ON -DCEF_ROOT="$PWD/cef-dist"
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ./build/Release/kiwi.exe
