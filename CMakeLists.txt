@@ -129,6 +129,8 @@ if(KIWI_BUILD_TESTS)
     target_include_directories(kiwi_start_page_tests PRIVATE
         src
         ${MUSTELA_ROOT}/include
+        ${MUSTELA_ROOT}/src
+        ${MUSTELA_ROOT}/src/core
         ${GTK_INCLUDE_DIRS}
         ${SOUP_INCLUDE_DIRS})
     target_link_directories(kiwi_start_page_tests PRIVATE ${GTK_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS})

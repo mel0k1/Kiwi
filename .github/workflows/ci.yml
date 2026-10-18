@@ -84,7 +84,7 @@ jobs:
           $sha = (Get-FileHash cef.tar.bz2 -Algorithm SHA1).Hash.ToLower()
           if ($sha -ne $env:CEF_SHA1) { throw "CEF sha1 mismatch: $sha" }
           tar -xf cef.tar.bz2
-          Move-Item "cef_binary_$env:CEF_VERSION" cef-dist
+          Move-Item "cef_binary_*_windows64_minimal" cef-dist
           Get-ChildItem cef-dist | Select-Object Name
 
       - name: Configure
