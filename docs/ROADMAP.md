@@ -69,3 +69,21 @@ First real-Windows feedback said: white page, "search is broken", crashes on eve
 - Icons: GTK on Windows ships without any icon theme, so symbolic icon names rendered as broken fallbacks. All toolbar, find-bar, tab-close and bookmark-star glyphs are now cairo-drawn MD3 pixbufs with an ink/muted tint swap for disabled controls (`src/icons.cpp`). (done)
 - Diagnostics: `%LocalAppData%\kiwi\crash.log` + `crash.dmp` via `SetUnhandledExceptionFilter` + `MiniDumpWriteDump`, `kiwi.log` for GTK criticals (same on Linux for the log). CI replaced the passive 20-second launch with a scripted `--self-test` (open/switch/close tabs, start page, omnibox, resize) on real Windows and Linux, failing on crash logs. (done)
 - Honest limits: notification toasts on Windows still require the engine's embedder presentation layer; the self-test cannot click into web content (no UI automation), so in-page interaction stays manual-test territory for now. (limits)
+
+## CEF transition (current, 0.11.0)
+
+The decision behind this milestone: every Windows defect of 0.8.0–0.10.0 traced back to one root — the WebKit WinCairo port (experimental upstream, mingw cross-compilation, no real sandbox, no codecs, crashes on the smallest step sideways). Fixing the symptoms produced a growing pile of workarounds. The engine seam designed in K1 (no WebKit types above `mustela::View`) made the actual surgery small:
+
+- Windows moves to CEF (Chromium, pinned per release): a native Win32 shell replaces the GTK chrome, and the engine's WinCairo view port plus the whole mingw pipeline are retired. The `windows` CI job is a two-artifact pipeline (portable zip + Inno Setup installer) over the CEF bundle. (done)
+- mustela-core survives as a static library fetched from the Mustela repo (`v0.25.1`): settings pipeline, privacy policy, `resolve_entry`, blocklist, fingerprint scripts, bookmarks, profile layout. It is load-bearing in the CEF build, not dead weight. (done)
+- Privacy surface on CEF: tracker blocklist and remote-font/ping blocking in `OnBeforeResourceLoad`, third-party/never cookie filtering via `CefCookieAccessFilter`, WebGL/canvas/referrer/GPC scripts injected in the render process before page scripts, media access denied, downloads into the user's Downloads directory, DoH via Chromium feature params. (done)
+- Shell: Win32 tab strip (titles, private prefix, per-tab close via Ctrl+W and the toolbar button), GDI-drawn toolbar glyphs, omnibox over `resolve_entry`, start page shared with the GTK build, Ctrl+D bookmarking, hotkeys alive in web-content focus through `CefKeyboardHandler`. (done)
+- Honest limits: no history/session restore on CEF yet, no per-site rules UI, no find bar, context menu is Chromium default, devtools and notifications not wired, update checker not ported, Chromium sandbox disabled until the `cef_sandbox.lib` linkage pass. Full matrix: `docs/CEF_PARITY.md`. (limits)
+
+## CEF series (next)
+
+- C2 — polish: per-tab close buttons in the strip, favicon-aware tab titles, MD3-styled Win32 chrome, find bar over `CefFindHandler`, devtools toggle, crash-recovery of the CEF render process.
+- C3 — privacy parity: per-site rules over `resolve_site` (UI + enforcement), stored-data clear screens over Chromium's cache/cookie APIs, `cef_sandbox.lib` linkage, header-level GPC.
+- C4 — library and settings: bookmarks manager, search engines editor and settings screens over the shared mustela-core state.
+- C5 — session/history on CEF: history recording behind the privacy policy, session restore, update checker port.
+- C6 — Linux evaluation: whether Kiwi-Linux also moves to CEF (one engine everywhere) or stays on the WebKitGTK stack it currently ships. Open on purpose.
