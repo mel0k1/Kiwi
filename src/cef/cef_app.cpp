@@ -4,6 +4,7 @@
 
 #include "fingerprint_scripts.hpp"
 
+#include <cstdlib>
 #include <string>
 
 namespace kiwi {
@@ -41,6 +42,25 @@ void KiwiCefApp::OnBeforeCommandLineProcessing(const CefString& process_type,
 
     command_line->AppendSwitchWithValue("disable-features",
         "Translate,MediaRouter,OptimizationHints");
+
+    // Debug/diagnostic hatch: KIWI_EXTRA_SWITCHES=disable-gpu,single-process
+    // appends raw Chromium switches without a rebuild (used by CI smoke
+    // runs to bisect startup crashes).
+    {
+        if (const char* env = std::getenv("KIWI_EXTRA_SWITCHES")) {
+            std::string extra(env);
+            size_t start = 0;
+            while (start < extra.size()) {
+                size_t comma = extra.find(',', start);
+                std::string one = extra.substr(
+                    start, comma == std::string::npos ? std::string::npos
+                                                      : comma - start);
+                if (!one.empty()) command_line->AppendSwitch(one);
+                if (comma == std::string::npos) break;
+                start = comma + 1;
+            }
+        }
+    }
 
     if (settings.block_autoplay) {
         command_line->AppendSwitchWithValue("autoplay-policy", "user-gesture-required");

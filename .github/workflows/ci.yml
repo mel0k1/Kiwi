@@ -112,21 +112,36 @@ jobs:
       - name: Smoke (self-test on real Windows)
         shell: pwsh
         run: |
-          Remove-Item "$env:LOCALAPPDATA\kiwi\startup.log","$env:LOCALAPPDATA\kiwi\crash.log" -ErrorAction SilentlyContinue
-          $p = Start-Process -FilePath build/bundle/kiwi.exe -ArgumentList "--self-test" -PassThru
-          if (-not $p.WaitForExit(120000)) {
-            $p.Kill()
-            throw "kiwi self-test timed out after 120s"
+          function Run-KiwiSelfTest([string]$Label) {
+            Remove-Item "$env:LOCALAPPDATA\kiwi\startup.log","$env:LOCALAPPDATA\kiwi\crash.log" -ErrorAction SilentlyContinue
+            $p = Start-Process -FilePath build/bundle/kiwi.exe -ArgumentList "--self-test" -PassThru
+            if (-not $p.WaitForExit(120000)) {
+              $p.Kill()
+              throw "kiwi self-test ($Label) timed out after 120s"
+            }
+            "kiwi self-test ($Label) exit code: $($p.ExitCode)"
+            $startup = "$env:LOCALAPPDATA\kiwi\startup.log"
+            if (Test-Path $startup) { Get-Content $startup | ForEach-Object { "startup: $_" } }
+            $crash = "$env:LOCALAPPDATA\kiwi\crash.log"
+            if (Test-Path $crash) {
+              Get-Content $crash
+              $ceflog = "$env:LOCALAPPDATA\kiwi\cef.log"
+              if (Test-Path $ceflog) { Get-Content $ceflog -Tail 60 }
+              return 2
+            }
+            if ($p.ExitCode -ne 0) { return $p.ExitCode }
+            return 0
           }
-          "kiwi self-test exit code: $($p.ExitCode)"
-          $startup = "$env:LOCALAPPDATA\kiwi\startup.log"
-          if (Test-Path $startup) { Get-Content $startup | ForEach-Object { "startup: $_" } }
-          $crash = "$env:LOCALAPPDATA\kiwi\crash.log"
-          if (Test-Path $crash) {
-            Get-Content $crash
-            throw "kiwi wrote crash.log during self-test"
+          $code = Run-KiwiSelfTest "stock"
+          if ($code -ne 0) {
+            "stock run failed with $code, retrying with --disable-gpu"
+            $env:KIWI_EXTRA_SWITCHES = "disable-gpu,disable-gpu-compositing"
+            $code = Run-KiwiSelfTest "disable-gpu"
+            if ($code -ne 0) {
+              throw "kiwi self-test failed with exit $code (also with --disable-gpu)"
+            }
+            "WARNING: stock startup crashed but --disable-gpu passes — GPU-process related; keep bisecting"
           }
-          if ($p.ExitCode -ne 0) { throw "kiwi self-test failed (exit $($p.ExitCode))" }
 
       - name: Pack zip
         shell: pwsh

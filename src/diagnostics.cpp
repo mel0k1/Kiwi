@@ -123,7 +123,7 @@ void fatal_dialog(const std::string& title, const std::string& detail) {
 
 namespace {
 
-std::string module_name_for(void* address) {
+std::string module_name_for(void* address, std::uintptr_t* base_out) {
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
                                 | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -136,6 +136,7 @@ std::string module_name_for(void* address) {
     if (len <= 0 || len >= MAX_PATH) return "?";
     std::wstring wide(path, len);
     size_t slash = wide.find_last_of(L"\\/");
+    if (base_out) *base_out = reinterpret_cast<std::uintptr_t>(module);
     return slash == std::wstring::npos ? "?" : std::string(wide.begin() + slash + 1, wide.end());
 }
 
@@ -152,11 +153,16 @@ LONG WINAPI kiwi_unhandled_exception(EXCEPTION_POINTERS* info) {
         + std::to_string(reinterpret_cast<unsigned long long>(
             info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionAddress : nullptr));
     for (unsigned short i = 0; i < count && i < 32; ++i) {
-        line += " | [" + std::to_string(i) + "] "
-            + module_name_for(frames[i]) + "+0x";
-        char suffix[32];
-        std::snprintf(suffix, sizeof(suffix), "%p", frames[i]);
-        line += suffix;
+        std::uintptr_t base = 0;
+        std::string module = module_name_for(frames[i], &base);
+        char frame[96];
+        // Print the offset from the module base so the frame can be matched
+        // against that exact binary (sym + base+offset).
+        std::snprintf(frame, sizeof(frame), " | [%u] %s+%llx",
+            static_cast<unsigned>(i), module.c_str(),
+            static_cast<unsigned long long>(
+                reinterpret_cast<std::uintptr_t>(frames[i]) - base));
+        line += frame;
     }
     std::string dir = diagnostics_dir();
     append_line(dir + "/crash.log", line);
