@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "include/cef_browser.h"
 
@@ -41,6 +42,10 @@ public:
     virtual void on_hotkey(Hotkey key) = 0;
     virtual void on_find_result(int browser_id, int count, int active_match,
                                 bool final_update) = 0;
+    virtual void on_open_url(int browser_id, const std::string& url,
+                             bool background) = 0;
+    virtual void on_favicon_urls(int browser_id,
+                                 const std::vector<std::string>& urls) = 0;
 };
 
 // Host part of a URL: strips scheme, userinfo, port and query, lowercases.

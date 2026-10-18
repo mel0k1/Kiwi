@@ -29,6 +29,7 @@ constexpr COLORREF kMuted = RGB(133, 146, 158);
 
 enum {
     ID_STYLE = 3001,
+    ID_TRANSPARENCY,
     ID_HOMEPAGE,
     ID_SEARCH,
     ID_DOH,
@@ -51,6 +52,7 @@ struct SettingsState {
     HWND hwnd = nullptr;
     std::function<void()> on_style_changed;
     std::string original_style;
+    bool original_transparency = false;
 };
 
 SettingsState* state_for(HWND hwnd) {
@@ -120,6 +122,8 @@ void load_into_controls(SettingsState* st) {
     SendMessageW(GetDlgItem(st->hwnd, ID_STYLE), CB_SETCURSEL,
         st->original_style == "zen" ? 1 : 0, 0);
 
+    set_checkbox(st->hwnd, ID_TRANSPARENCY, st->original_transparency);
+
     set_edit_utf8(GetDlgItem(st->hwnd, ID_HOMEPAGE), s.homepage);
     set_edit_utf8(GetDlgItem(st->hwnd, ID_SEARCH), s.search_template);
     set_edit_utf8(GetDlgItem(st->hwnd, ID_DOH), s.dns_over_https);
@@ -152,6 +156,10 @@ bool save_from_controls(SettingsState* st) {
     bool style_changed = style != st->original_style;
     kiwi::save_shell_style(rt->config_dir, style);
 
+    bool transparency = checkbox_value(st->hwnd, ID_TRANSPARENCY) != 0;
+    kiwi::save_shell_transparency(rt->config_dir, transparency);
+    bool transparency_changed = transparency != st->original_transparency;
+
     s.homepage = edit_text(GetDlgItem(st->hwnd, ID_HOMEPAGE));
     s.search_template = edit_text(GetDlgItem(st->hwnd, ID_SEARCH));
     s.dns_over_https = edit_text(GetDlgItem(st->hwnd, ID_DOH));
@@ -175,7 +183,10 @@ bool save_from_controls(SettingsState* st) {
         rt->policy.blocklist ? s.blocklist_file : std::string());
 
     st->original_style = style;
-    if (style_changed && st->on_style_changed) st->on_style_changed();
+    st->original_transparency = transparency;
+    if ((style_changed || transparency_changed) && st->on_style_changed) {
+        st->on_style_changed();
+    }
     return true;
 }
 
@@ -270,6 +281,7 @@ void open_settings_window(HWND owner, std::function<void()> on_style_changed) {
     auto* st = new SettingsState();
     st->on_style_changed = std::move(on_style_changed);
     st->original_style = kiwi::load_shell_style(rt->config_dir);
+    st->original_transparency = kiwi::load_shell_transparency(rt->config_dir);
 
     RECT area = {0, 0, 470, 520};
     AdjustWindowRect(&area, WS_OVERLAPPEDWINDOW, FALSE);
@@ -311,7 +323,9 @@ void open_settings_window(HWND owner, std::function<void()> on_style_changed) {
     int y = 14;
     heading(L"Appearance", x0, y); y += 24;
     label(L"Shell style", x0, y + 3, 120);
-    combo((HMENU)(intptr_t)ID_STYLE, x0 + 130, y, w - 130); y += 30;
+    combo((HMENU)(intptr_t)ID_STYLE, x0 + 130, y, w - 130); y += 28;
+    check((HMENU)(intptr_t)ID_TRANSPARENCY,
+        L"Transparency (Mica, Windows 11 22H2+)", x0, y); y += 26;
 
     heading(L"Search and home", x0, y + 4); y += 28;
     label(L"Homepage", x0, y + 3, 120);

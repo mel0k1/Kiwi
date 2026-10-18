@@ -32,25 +32,27 @@ Mustela view library on Windows anymore.
 | Hyperlink auditing off | engine hardening | `PING` method cancelled | done |
 | DoH | engine hook | Chromium `DnsOverHttps` feature params (secure mode, custom template) | experimental |
 | Autoplay block | engine hardening | `autoplay-policy=user-gesture-required` | done |
-| Tabs | GTK notebook, favicons, drag-reorder | Win32 owner-drawn tab control, per-tab close buttons, private prefix | good |
-| Toolbar | cairo MD3 icons | GDI-drawn glyphs (back/forward/reload/new/close) | basic |
+| Tabs | GTK notebook, favicons, drag-reorder | custom-drawn chrome: caption-row tab chips (classic) or vertical rail (Zen) with favicons, loading spinner, private badge, per-tab close, strip context menu, middle-click close | good |
+| Toolbar | cairo MD3 icons | GDI+ vector icon set (anti-aliased back/forward/reload/star/gear/plus/close), pill omnibox with focus ring | good |
+| Window chrome | GTK headerbar | custom caption (drawn min/max/close, HTCAPTION drag, snap layouts), Win11 rounded corners + optional Mica transparency (22H2+, solid fallback) | done |
 | Popups | engine-owned tabs | `OnBeforePopup` → new Kiwi tab, opener privacy inherited | done |
-| History | engine store + history screen | not recorded yet | open |
-| Session restore | engine store + UI | not implemented | open |
+| History | engine store + history screen | mustela-core HistoryStore + Ctrl+H window (Open/Clear) | done |
+| Session restore | engine store + UI | profile `session.toml` saved on close, restored on launch | done |
+| Tab favicons | engine favicon store | `OnFaviconURLChange` → `CefURLRequest` download → ICO/PNG/JPEG/BMP decode → tab chip + `profile/favicons/<host>.png` disk cache shared with start tiles (private tabs never fetch) | done |
 | Per-site rules (JS/cookies/fingerprint per site) | engine `resolve_site` + UI editor | shared `sites.toml` store + gear-button editor; enforcement: cookie deny in `CefCookieAccessFilter`, fingerprint allow/deny per frame in the render process, font blocking + zoom via `resolve_site` in `OnBeforeResourceLoad`, JS deny cancels external script resources (inline scripts still run — no per-origin toggle in Chromium) | done (JS partial) |
 | Data-clear screens | engine `ClearRequest` API + UI | no UI; Chromium keeps its own cache under `config/cef` | open |
 | Find in page | engine find controller + UI bar | `CefFindHandler` + find bar (Ctrl+F, F3/Shift+F3, Esc, "n of m" counter per tab) | done |
-| Context menu | engine `ContextMenuInfo` + MD3 menu | Chromium default menu | open |
+| Context menu | engine `ContextMenuInfo` + MD3 menu | `CefContextMenuHandler` custom menu (navigation, link/image actions, clipboard, edit commands, search selection, view source, inspect) + tab strip menu | done |
 | Devtools | engine inspector + Ctrl+Shift+I | `ShowDevTools`/`CloseDevTools` toggle (Ctrl+Shift+I), CEF-owned popup window | done |
 | MHTML save | engine `save_mhtml` | not available (Chromium has no public MHTML API) | dropped |
 | Web notifications | engine permission flow → `GNotification` | not implemented | open |
-| Bookmarks manager UI | K3 screen | store is shared (Ctrl+D works, tiles show), no manager window | partial |
+| Bookmarks manager UI | K3 screen | manager window over the shared store (Ctrl+Shift+O, star button) | done |
 | Search engines editor | K3 screen | no UI; `settings.toml` is read by mustela-core | open |
-| Settings UI | K2/K3 screens | no UI; edit `settings.toml` in `%LocalAppData%\kiwi` | open |
+| Settings UI | K2/K3 screens | settings window (Ctrl+,: style/transparency, homepage, search, cookies, DoH, privacy toggles) + per-site rules editor | done |
 | Chromium services trim | n/a | Translate, MediaRouter, OptimizationHints disabled; no component updates | done |
 | Crash diagnostics | engine + `crash.log`/minidump | same `diagnostics.cpp` (shared), plus CEF `cef.log` | done |
 | Chromium sandbox | n/a | enabled via the CEF bootstrap loader: client builds as `kiwi.dll` exporting `RunWinMain`, `bootstrap.exe` renamed to `kiwi.exe` prepares the sandbox context for `CefExecuteProcess`/`CefInitialize` (`cef_sandbox.lib` no longer exists in CEF 138+) | done |
-| Update checker | libsoup on GTK | not implemented on CEF yet | open |
+| Update checker | libsoup on GTK | manual check in settings over CEF URL request + semver compare | done |
 
 ## Deliberately cut (кастрируем)
 

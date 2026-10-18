@@ -2,9 +2,20 @@
 
 #include "cef_runtime.hpp"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include "include/cef_command_ids.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 
 namespace kiwi {
 
@@ -367,6 +378,263 @@ void KiwiClient::OnFindResult(CefRefPtr<CefBrowser> browser,
     (void)selectionRect;
     if (!host_) return;
     host_->on_find_result(browser->GetIdentifier(), count, activeMatchOrdinal, finalUpdate);
+}
+
+void KiwiClient::OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
+                                    const std::vector<CefString>& icon_urls) {
+    if (!host_) return;
+    std::vector<std::string> urls;
+    urls.reserve(icon_urls.size());
+    for (const CefString& url : icon_urls) urls.push_back(url.ToString());
+    host_->on_favicon_urls(browser->GetIdentifier(), urls);
+}
+
+namespace {
+
+constexpr int CMD_BACK = MENU_ID_USER_FIRST + 1;
+constexpr int CMD_FORWARD = MENU_ID_USER_FIRST + 2;
+constexpr int CMD_RELOAD = MENU_ID_USER_FIRST + 3;
+constexpr int CMD_STOP = MENU_ID_USER_FIRST + 4;
+constexpr int CMD_OPEN_LINK_NEW_TAB = MENU_ID_USER_FIRST + 10;
+constexpr int CMD_COPY_LINK = MENU_ID_USER_FIRST + 11;
+constexpr int CMD_OPEN_IMAGE_NEW_TAB = MENU_ID_USER_FIRST + 12;
+constexpr int CMD_COPY_IMAGE_URL = MENU_ID_USER_FIRST + 13;
+constexpr int CMD_COPY_SELECTION = MENU_ID_USER_FIRST + 20;
+constexpr int CMD_SEARCH_SELECTION = MENU_ID_USER_FIRST + 21;
+constexpr int CMD_UNDO = MENU_ID_USER_FIRST + 22;
+constexpr int CMD_CUT = MENU_ID_USER_FIRST + 23;
+constexpr int CMD_PASTE = MENU_ID_USER_FIRST + 24;
+constexpr int CMD_SELECT_ALL = MENU_ID_USER_FIRST + 25;
+constexpr int CMD_VIEW_SOURCE = MENU_ID_USER_FIRST + 30;
+constexpr int CMD_INSPECT = MENU_ID_USER_FIRST + 31;
+
+std::wstring utf8_to_wide(const std::string& text) {
+    if (text.empty()) return std::wstring();
+    int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(),
+        static_cast<int>(text.size()), nullptr, 0);
+    std::wstring wide(static_cast<size_t>(size), L'\0');
+    if (size > 0) {
+        MultiByteToWideChar(CP_UTF8, 0, text.c_str(),
+            static_cast<int>(text.size()), wide.data(), size);
+    }
+    return wide;
+}
+
+void copy_text_to_clipboard(HWND owner, const std::string& utf8) {
+    std::wstring text = utf8_to_wide(utf8);
+    if (text.empty()) return;
+    if (!OpenClipboard(owner)) return;
+    EmptyClipboard();
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t));
+    if (mem) {
+        void* dest = GlobalLock(mem);
+        if (dest) {
+            std::memcpy(dest, text.c_str(), (text.size() + 1) * sizeof(wchar_t));
+            GlobalUnlock(mem);
+            if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+        } else {
+            GlobalFree(mem);
+        }
+    }
+    CloseClipboard();
+}
+
+std::string percent_encode_utf8(const std::string& raw) {
+    static const char hex[] = "0123456789ABCDEF";
+    std::string out;
+    for (unsigned char c : raw) {
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+            || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += '%';
+            out += hex[c >> 4];
+            out += hex[c & 0x0F];
+        }
+    }
+    return out;
+}
+
+std::string engine_template() {
+    Runtime* rt = runtime();
+    if (rt) {
+        for (const mustela::SearchEngine& engine : rt->settings.search_engines) {
+            if (!rt->settings.search_default.empty()
+                && engine.keyword == rt->settings.search_default
+                && engine.url_template.find("%s") != std::string::npos) {
+                return engine.url_template;
+            }
+        }
+        if (rt->settings.search_template.find("%s") != std::string::npos) {
+            return rt->settings.search_template;
+        }
+        for (const mustela::SearchEngine& engine : rt->settings.search_engines) {
+            if (engine.url_template.find("%s") != std::string::npos) {
+                return engine.url_template;
+            }
+        }
+    }
+    return "https://duckduckgo.com/?q=%s";
+}
+
+std::string replace_first(std::string text, const std::string& slot,
+                          const std::string& value) {
+    size_t at = text.find(slot);
+    if (at == std::string::npos) return text;
+    return text.substr(0, at) + value + text.substr(at + slot.size());
+}
+
+bool is_web_url(const std::string& url) {
+    return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
+}
+
+}  // namespace
+
+void KiwiClient::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                                     CefRefPtr<CefFrame> frame,
+                                     CefRefPtr<CefContextMenuParams> params,
+                                     CefRefPtr<CefMenuModel> model) {
+    if (!host_) return;
+    model->Clear();
+
+    const std::string page_url = frame->GetURL().ToString();
+    const bool web = is_web_url(page_url);
+    const int types = params->GetTypeFlags();
+    const bool link = (types & CM_TYPEFLAG_LINK) != 0;
+    const bool image = params->GetMediaType() == CM_MEDIATYPE_IMAGE;
+    const bool selection = (types & CM_TYPEFLAG_SELECTION) != 0
+        && !params->GetSelectionText().empty();
+    const bool editable = (types & CM_TYPEFLAG_EDITABLE) != 0;
+
+    if (web) {
+        model->AddItem(CMD_BACK, L"Back");
+        model->SetEnabled(CMD_BACK, browser->CanGoBack());
+        model->AddItem(CMD_FORWARD, L"Forward");
+        model->SetEnabled(CMD_FORWARD, browser->CanGoForward());
+        model->AddItem(CMD_RELOAD, L"Reload");
+        model->AddItem(CMD_STOP, L"Stop");
+        model->SetEnabled(CMD_STOP, browser->IsLoading());
+        model->AddSeparator();
+    }
+
+    if (link) {
+        model->AddItem(CMD_OPEN_LINK_NEW_TAB, L"Open link in new tab");
+        model->AddItem(CMD_COPY_LINK, L"Copy link address");
+        model->AddSeparator();
+    }
+
+    if (image) {
+        model->AddItem(CMD_OPEN_IMAGE_NEW_TAB, L"Open image in new tab");
+        model->AddItem(CMD_COPY_IMAGE_URL, L"Copy image address");
+        model->AddSeparator();
+    }
+
+    if (editable) {
+        const int edit = params->GetEditStateFlags();
+        model->AddItem(CMD_UNDO, L"Undo");
+        model->SetEnabled(CMD_UNDO, (edit & CM_EDITFLAG_CAN_UNDO) != 0);
+        model->AddItem(CMD_CUT, L"Cut");
+        model->SetEnabled(CMD_CUT, (edit & CM_EDITFLAG_CAN_CUT) != 0);
+        model->AddItem(CMD_COPY_SELECTION, L"Copy");
+        model->SetEnabled(CMD_COPY_SELECTION,
+            (edit & CM_EDITFLAG_CAN_COPY) != 0);
+        model->AddItem(CMD_PASTE, L"Paste");
+        model->SetEnabled(CMD_PASTE, (edit & CM_EDITFLAG_CAN_PASTE) != 0);
+        model->AddItem(CMD_SELECT_ALL, L"Select all");
+        model->SetEnabled(CMD_SELECT_ALL,
+            (edit & CM_EDITFLAG_CAN_SELECT_ALL) != 0);
+        model->AddSeparator();
+    } else if (selection) {
+        model->AddItem(CMD_COPY_SELECTION, L"Copy");
+        model->AddItem(CMD_SEARCH_SELECTION, L"Search web for selection");
+        model->AddSeparator();
+    }
+
+    if (web) {
+        model->AddItem(CMD_VIEW_SOURCE, L"View page source");
+        if (browser->GetHost()->HasDevTools()) {
+            model->AddItem(CMD_INSPECT, L"Inspect");
+        }
+    }
+}
+
+bool KiwiClient::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                                      CefRefPtr<CefFrame> frame,
+                                      CefRefPtr<CefContextMenuParams> params,
+                                      int command_id,
+                                      cef_event_flags_t event_flags) {
+    (void)event_flags;
+    if (!host_) return false;
+    switch (command_id) {
+        case CMD_BACK:
+            browser->GoBack();
+            return true;
+        case CMD_FORWARD:
+            browser->GoForward();
+            return true;
+        case CMD_RELOAD:
+            browser->Reload();
+            return true;
+        case CMD_STOP:
+            browser->StopLoad();
+            return true;
+        case CMD_OPEN_LINK_NEW_TAB:
+            host_->on_open_url(browser->GetIdentifier(),
+                params->GetLinkUrl().ToString(), true);
+            return true;
+        case CMD_COPY_LINK: {
+            std::string link = params->GetUnfilteredLinkUrl().ToString();
+            if (link.empty()) link = params->GetLinkUrl().ToString();
+            copy_text_to_clipboard(
+                browser->GetHost()->GetWindowHandle(), link);
+            return true;
+        }
+        case CMD_OPEN_IMAGE_NEW_TAB:
+            host_->on_open_url(browser->GetIdentifier(),
+                params->GetSourceUrl().ToString(), true);
+            return true;
+        case CMD_COPY_IMAGE_URL:
+            copy_text_to_clipboard(browser->GetHost()->GetWindowHandle(),
+                params->GetSourceUrl().ToString());
+            return true;
+        case CMD_COPY_SELECTION:
+            frame->Copy();
+            return true;
+        case CMD_SEARCH_SELECTION: {
+            std::string query = params->GetSelectionText().ToString();
+            if (query.empty()) return true;
+            std::string url = replace_first(engine_template(), "%s",
+                percent_encode_utf8(query));
+            host_->on_open_url(browser->GetIdentifier(), url, true);
+            return true;
+        }
+        case CMD_UNDO:
+            frame->Undo();
+            return true;
+        case CMD_CUT:
+            frame->Cut();
+            return true;
+        case CMD_PASTE:
+            frame->Paste();
+            return true;
+        case CMD_SELECT_ALL:
+            frame->SelectAll();
+            return true;
+        case CMD_VIEW_SOURCE:
+            frame->ViewSource();
+            return true;
+        case CMD_INSPECT:
+            host_->on_hotkey(HK_DEVTOOLS);
+            return true;
+        default:
+            return false;
+    }
+}
+
+void KiwiClient::OnContextMenuDismissed(CefRefPtr<CefBrowser> browser,
+                                        CefRefPtr<CefFrame> frame) {
+    (void)browser;
+    (void)frame;
 }
 
 }

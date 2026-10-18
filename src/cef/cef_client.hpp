@@ -3,6 +3,7 @@
 #include "cef_bridge.hpp"
 
 #include "include/cef_client.h"
+#include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
 #include "include/cef_find_handler.h"
 #include "include/cef_permission_handler.h"
@@ -34,6 +35,7 @@ class KiwiClient : public CefClient,
                    public CefRequestHandler,
                    public CefResourceRequestHandler,
                    public CefCookieAccessFilter,
+                   public CefContextMenuHandler,
                    public CefDownloadHandler,
                    public CefPermissionHandler,
                    public CefKeyboardHandler,
@@ -49,6 +51,7 @@ public:
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
     CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
+    CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
@@ -79,6 +82,20 @@ public:
                    CefRefPtr<CefFrame> frame,
                    int httpStatusCode) override;
     void OnStatusMessage(CefRefPtr<CefBrowser> browser, const CefString& value) override;
+    void OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
+                            const std::vector<CefString>& icon_urls) override;
+
+    void OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
+                             CefRefPtr<CefFrame> frame,
+                             CefRefPtr<CefContextMenuParams> params,
+                             CefRefPtr<CefMenuModel> model) override;
+    bool OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
+                              CefRefPtr<CefFrame> frame,
+                              CefRefPtr<CefContextMenuParams> params,
+                              int command_id,
+                              cef_event_flags_t event_flags) override;
+    void OnContextMenuDismissed(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame) override;
 
     CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
         CefRefPtr<CefBrowser> browser,

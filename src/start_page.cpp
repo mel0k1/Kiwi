@@ -104,93 +104,123 @@ std::string host_of(const std::string& url) {
 const char* base_css() {
     return R"CSS(
 :root {
-  --surface: #FFF5F0;
-  --surface-variant: #FADBD8;
-  --primary: #E67E22;
-  --primary-soft: #E59866;
-  --on-primary: #FFFFFF;
-  --outline: #EDBB99;
-  --text: #2C3E50;
-  --text-dim: #85929E;
-  --press: #F5CBA7;
+  color-scheme: light dark;
+  --surface: #f5f6f8;
+  --card: #ffffff;
+  --text: #1d2129;
+  --muted: #5c6470;
+  --accent: #e0762e;
+  --border: #e2e5ea;
+  --hover: #eef0f3;
+  --chip: #f1f2f5;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #12151a;
+    --card: #1a1f27;
+    --text: #e8eaee;
+    --muted: #98a0ab;
+    --border: #2a3140;
+    --hover: #222a36;
+    --chip: #202836;
+  }
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
-  background: var(--surface);
+  background:
+    radial-gradient(1000px 500px at 20% -10%, rgba(224, 118, 46, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 85% 110%, rgba(46, 134, 222, 0.06), transparent 55%),
+    var(--surface);
   color: var(--text);
-  font-family: "Segoe UI", "Noto Sans", Ubuntu, Cantarell, sans-serif;
+  font-family: "Segoe UI Variable", "Segoe UI", "Noto Sans", Ubuntu, Cantarell, sans-serif;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: 24px;
 }
-.brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
-.brand img { width: 44px; height: 44px; }
-.brand h1 { font-size: 34px; font-weight: 600; letter-spacing: 0.5px; }
-.clock { color: var(--text-dim); font-size: 14px; margin-bottom: 26px; }
+.brand { display: flex; align-items: baseline; gap: 2px; margin-bottom: 6px; }
+.brand h1 { font-size: 40px; font-weight: 700; letter-spacing: -0.5px; }
+.brand .dot { color: var(--accent); font-size: 40px; font-weight: 700; }
+.clock { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
 .search {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 12px;
   width: min(620px, 100%);
-  background: #FFFFFF;
-  border: 1px solid var(--outline);
-  border-radius: 14px;
-  padding: 13px 18px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 20px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 30px rgba(0, 0, 0, 0.07);
 }
-.search:focus-within { border-color: var(--primary-soft); }
-.search svg { flex: none; stroke: var(--text-dim); }
+@media (prefers-color-scheme: dark) {
+  .search { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.35); }
+}
+.search:focus-within { border-color: var(--accent); }
+.search svg { flex: none; stroke: var(--muted); }
 .search input {
   flex: 1; border: none; outline: none; background: transparent;
   font: inherit; font-size: 16px; color: var(--text);
 }
-.search input::placeholder { color: var(--text-dim); }
+.search input::placeholder { color: var(--muted); }
 .tiles {
-  margin-top: 30px;
+  margin-top: 34px;
   display: grid;
   grid-template-columns: repeat(auto-fit, 96px);
-  gap: 12px;
+  gap: 10px;
   justify-content: center;
-  width: min(660px, 100%);
+  width: min(680px, 100%);
 }
 .tile {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 12px 4px 8px;
-  border-radius: 12px;
+  padding: 12px 4px 10px;
+  border-radius: 14px;
   border: 1px solid transparent;
   text-decoration: none;
   color: var(--text);
+  transition: background 0.12s ease, border-color 0.12s ease;
 }
-.tile:hover { background: var(--surface-variant); border-color: var(--outline); }
+.tile:hover { background: var(--hover); border-color: var(--border); }
 .tile .face {
   position: relative;
-  width: 40px; height: 40px; border-radius: 10px;
-  background: var(--surface-variant);
-  border: 1px solid var(--outline);
+  width: 40px; height: 40px; border-radius: 12px;
+  background: var(--chip);
+  border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
-  font-size: 18px; font-weight: 600; color: var(--primary);
+  font-size: 17px; font-weight: 600; color: var(--accent);
   overflow: hidden;
 }
 .tile .face img {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  margin: auto; width: 24px; height: 24px; background: #FFFFFF;
+  margin: auto; width: 24px; height: 24px;
 }
 .tile .name {
   max-width: 92px;
-  font-size: 12px; color: var(--text-dim);
+  font-size: 12px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .banner {
   margin-top: 26px;
-  background: var(--surface-variant);
-  border: 1px solid var(--outline);
-  border-radius: 10px;
-  padding: 8px 16px;
+  background: var(--chip);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 18px;
   font-size: 13px;
   color: var(--text);
 }
-.hints { margin-top: 30px; color: var(--text-dim); font-size: 12px; }
-.hints b { color: var(--text); font-weight: 600; }
+.hints {
+  position: fixed;
+  bottom: 18px; left: 0; right: 0;
+  text-align: center;
+  color: var(--muted); font-size: 12px;
+}
+.hints b {
+  background: var(--chip);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 6px;
+  color: var(--text); font-weight: 600; font-size: 11px;
+}
 )CSS";
 }
 
@@ -230,7 +260,7 @@ std::string write_start_page(const std::string& profile_root,
     html += base_css();
     html += "</style></head>\n<body>\n";
 
-    html += "<div class=\"brand\"><h1>Kiwi</h1></div>\n";
+    html += "<div class=\"brand\"><h1>Kiwi</h1><span class=\"dot\">.</span></div>\n";
     html += "<div class=\"clock\" id=\"clock\"></div>\n";
 
     std::string template_js = escape_js(engine_template(settings));
