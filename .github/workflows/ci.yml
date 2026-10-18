@@ -93,7 +93,7 @@ jobs:
             mingw-w64-x86_64-glib-networking
 
       - name: Checkout Mustela engine
-        run: git clone --depth 1 --branch v0.24.1 https://github.com/mel0k1/Mustela.git ../Mustela
+        run: git clone --depth 1 --branch v0.24.2 https://github.com/mel0k1/Mustela.git ../Mustela
 
       - name: Fetch WebKit C API headers
         shell: pwsh
