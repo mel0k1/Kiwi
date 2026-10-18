@@ -27,6 +27,7 @@ namespace {
 constexpr unsigned int kVkLeft = 0x25;
 constexpr unsigned int kVkRight = 0x27;
 constexpr unsigned int kVkF5 = 0x74;
+constexpr unsigned int kVkF3 = 0x72;
 
 bool is_third_party(const std::string& request_host, const std::string& cookie_domain) {
     if (request_host.empty() || cookie_domain.empty()) return false;
@@ -266,20 +267,37 @@ bool KiwiClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
             case 'L': key = HK_FOCUS_OMNIBOX; break;
             case 'R': key = HK_RELOAD; break;
             case 'D': key = HK_BOOKMARK; break;
+            case 'F': key = HK_FIND; break;
             default: break;
         }
     } else if (ctrl && shift && !alt) {
         if (event.windows_key_code == 'P') key = HK_PRIVATE_TAB;
+        if (event.windows_key_code == 'I') key = HK_DEVTOOLS;
+    } else if (shift && !ctrl && !alt) {
+        if (event.windows_key_code == kVkF3) key = HK_FIND_PREV;
     } else if (alt && !ctrl && !shift) {
         if (event.windows_key_code == kVkLeft) key = HK_BACK;
         if (event.windows_key_code == kVkRight) key = HK_FORWARD;
     } else if (!ctrl && !shift && !alt) {
         if (event.windows_key_code == kVkF5) key = HK_RELOAD;
+        if (event.windows_key_code == kVkF3) key = HK_FIND_NEXT;
     }
 
     if (key == HK_NONE) return false;
     host_->on_hotkey(key);
     return true;
+}
+
+void KiwiClient::OnFindResult(CefRefPtr<CefBrowser> browser,
+                              int identifier,
+                              int count,
+                              const CefRect& selectionRect,
+                              int activeMatchOrdinal,
+                              bool finalUpdate) {
+    (void)identifier;
+    (void)selectionRect;
+    if (!host_) return;
+    host_->on_find_result(browser->GetIdentifier(), count, activeMatchOrdinal, finalUpdate);
 }
 
 }

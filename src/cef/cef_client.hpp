@@ -4,6 +4,7 @@
 
 #include "include/cef_client.h"
 #include "include/cef_download_handler.h"
+#include "include/cef_find_handler.h"
 #include "include/cef_permission_handler.h"
 #include "include/cef_request_handler.h"
 #include "include/cef_resource_request_handler.h"
@@ -14,6 +15,18 @@ namespace kiwi {
 // request-level privacy surface — tracker blocklist, ping and font blocking,
 // third-party cookie filtering, media-access denial, downloads into the
 // user downloads directory and the keyboard shortcut bridge.
+// Minimal client for the DevTools popup browser. It intentionally forwards
+// nothing to the shell: the DevTools browser must never land in the tab
+// strip or drive the omnibox.
+class DevToolsClient : public CefClient {
+public:
+    DevToolsClient() = default;
+
+private:
+    IMPLEMENT_REFCOUNTING(DevToolsClient);
+    DISALLOW_COPY_AND_ASSIGN(DevToolsClient);
+};
+
 class KiwiClient : public CefClient,
                    public CefLifeSpanHandler,
                    public CefDisplayHandler,
@@ -23,7 +36,8 @@ class KiwiClient : public CefClient,
                    public CefCookieAccessFilter,
                    public CefDownloadHandler,
                    public CefPermissionHandler,
-                   public CefKeyboardHandler {
+                   public CefKeyboardHandler,
+                   public CefFindHandler {
 public:
     KiwiClient(TabHost* host, bool private_tab);
 
@@ -34,6 +48,7 @@ public:
     CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
     CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
     CefRefPtr<CefKeyboardHandler> GetKeyboardHandler() override { return this; }
+    CefRefPtr<CefFindHandler> GetFindHandler() override { return this; }
 
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
     bool OnBeforePopup(CefRefPtr<CefBrowser> browser,
@@ -106,6 +121,13 @@ public:
                        const CefKeyEvent& event,
                        CefEventHandle os_event,
                        bool* is_keyboard_shortcut) override;
+
+    void OnFindResult(CefRefPtr<CefBrowser> browser,
+                      int identifier,
+                      int count,
+                      const CefRect& selectionRect,
+                      int activeMatchOrdinal,
+                      bool finalUpdate) override;
 
 private:
     bool cookie_allowed(CefRefPtr<CefRequest> request, const CefCookie& cookie) const;

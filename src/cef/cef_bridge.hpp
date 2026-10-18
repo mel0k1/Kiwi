@@ -15,7 +15,11 @@ enum Hotkey {
     HK_BOOKMARK,
     HK_PRIVATE_TAB,
     HK_BACK,
-    HK_FORWARD
+    HK_FORWARD,
+    HK_FIND,
+    HK_FIND_NEXT,
+    HK_FIND_PREV,
+    HK_DEVTOOLS
 };
 
 // Shell-facing callbacks the CEF client forwards. Every method runs on the
@@ -32,6 +36,8 @@ public:
     virtual void on_status(int browser_id, const std::string& text) = 0;
     virtual void on_popup(int browser_id, const std::string& url, bool private_tab) = 0;
     virtual void on_hotkey(Hotkey key) = 0;
+    virtual void on_find_result(int browser_id, int count, int active_match,
+                                bool final_update) = 0;
 };
 
 // Host part of a URL: strips scheme, userinfo, port and query, lowercases.

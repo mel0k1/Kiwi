@@ -80,10 +80,10 @@ The decision behind this milestone: every Windows defect of 0.8.0–0.10.0 trace
 - Shell: Win32 tab strip (titles, private prefix, per-tab close via Ctrl+W and the toolbar button), GDI-drawn toolbar glyphs, omnibox over `resolve_entry`, start page shared with the GTK build, Ctrl+D bookmarking, hotkeys alive in web-content focus through `CefKeyboardHandler`. (done)
 - Honest limits: no history/session restore on CEF yet, no per-site rules UI, no find bar, context menu is Chromium default, devtools and notifications not wired, update checker not ported, Chromium sandbox disabled until the `cef_sandbox.lib` linkage pass. Full matrix: `docs/CEF_PARITY.md`. (limits)
 
-## CEF series (next)
+## CEF series
 
-- C2 — polish: per-tab close buttons in the strip, favicon-aware tab titles, MD3-styled Win32 chrome, find bar over `CefFindHandler`, devtools toggle, crash-recovery of the CEF render process.
-- C3 — privacy parity: per-site rules over `resolve_site` (UI + enforcement), stored-data clear screens over Chromium's cache/cookie APIs, `cef_sandbox.lib` linkage, header-level GPC.
+- C2 — polish (done, 0.12.0): per-tab close buttons in the strip (owner-drawn tabs with selection highlight, hover feedback and a hover-highlighted × that closes without switching selection), find bar over `CefFindHandler` (Ctrl+F, live search, Enter/F3 and Shift+F3 step, Esc closes, per-tab "n of m" counter), devtools toggle (Ctrl+Shift+I) over `ShowDevTools`/`CloseDevTools` in a CEF-owned popup window kept out of the tab strip by a dedicated client, and closing the last tab now closes the browser instead of leaving an empty shell. Honest limits: tab favicons and render-process crash recovery are not in this slice — favicons need a `OnFaviconURLChange` + download pass, crash recovery lands with the session work (C5); devtools opens detached (no docked view yet, matching the Win32 shell's window model).
+- C3 — privacy parity: per-site rules over `resolve_site` (UI + enforcement), stored-data clear screens over Chromium's cache/cookie APIs, Chromium sandbox linkage (note: CEF 138+ replaced the `cef_sandbox.lib` static-link model with the `bootstrap.exe` loader — the client ships as a DLL exporting `RunWinMain` and forwards the prepared sandbox context into `CefExecuteProcess`/`CefInitialize`), header-level GPC.
 - C4 — library and settings: bookmarks manager, search engines editor and settings screens over the shared mustela-core state.
 - C5 — session/history on CEF: history recording behind the privacy policy, session restore, update checker port.
 - C6 — Linux evaluation: whether Kiwi-Linux also moves to CEF (one engine everywhere) or stays on the WebKitGTK stack it currently ships. Open on purpose.

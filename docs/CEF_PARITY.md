@@ -32,16 +32,16 @@ Mustela view library on Windows anymore.
 | Hyperlink auditing off | engine hardening | `PING` method cancelled | done |
 | DoH | engine hook | Chromium `DnsOverHttps` feature params (secure mode, custom template) | experimental |
 | Autoplay block | engine hardening | `autoplay-policy=user-gesture-required` | done |
-| Tabs | GTK notebook, favicons, drag-reorder | Win32 tab control, titles, private prefix | basic |
+| Tabs | GTK notebook, favicons, drag-reorder | Win32 owner-drawn tab control, per-tab close buttons, private prefix | good |
 | Toolbar | cairo MD3 icons | GDI-drawn glyphs (back/forward/reload/new/close) | basic |
 | Popups | engine-owned tabs | `OnBeforePopup` → new Kiwi tab, opener privacy inherited | done |
 | History | engine store + history screen | not recorded yet | open |
 | Session restore | engine store + UI | not implemented | open |
 | Per-site rules (JS/cookies/fingerprint per site) | engine `resolve_site` + UI editor | core surface exists; no UI, global policy only | open |
 | Data-clear screens | engine `ClearRequest` API + UI | no UI; Chromium keeps its own cache under `config/cef` | open |
-| Find in page | engine find controller + UI bar | not implemented (CEF `CefFindHandler` available) | open |
+| Find in page | engine find controller + UI bar | `CefFindHandler` + find bar (Ctrl+F, F3/Shift+F3, Esc, "n of m" counter per tab) | done |
 | Context menu | engine `ContextMenuInfo` + MD3 menu | Chromium default menu | open |
-| Devtools | engine inspector + Ctrl+Shift+I | not implemented (CEF exposes `ShowDevTools`) | open |
+| Devtools | engine inspector + Ctrl+Shift+I | `ShowDevTools`/`CloseDevTools` toggle (Ctrl+Shift+I), CEF-owned popup window | done |
 | MHTML save | engine `save_mhtml` | not available (Chromium has no public MHTML API) | dropped |
 | Web notifications | engine permission flow → `GNotification` | not implemented | open |
 | Bookmarks manager UI | K3 screen | store is shared (Ctrl+D works, tiles show), no manager window | partial |
