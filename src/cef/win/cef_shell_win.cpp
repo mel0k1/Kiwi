@@ -832,6 +832,14 @@ int CefShell::add_tab(const std::string& url, bool private_tab) {
 
     CefWindowInfo info;
     info.SetAsChild(host_, CefRect(0, 0, 10, 10));
+    // Windowed child-HWND hosting is only supported by the Alloy runtime in
+    // CEF 152; the Chrome runtime (the default) crashes in
+    // TabInterface::GetFromContents while attaching the first tab (verified
+    // against the CEF 152 release PDB: the AV stack is
+    // CefBrowserHostBase::Create -> CefWindowImpl::Create -> AddTabAt ->
+    // WebView::SetWebContents -> WebappsClientDesktop::GetAppIdForWebContents
+    // -> TabInterface::GetFromContents).
+    info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
     CefBrowserSettings browser_settings;
     Runtime* rt = runtime();
     if (rt && !rt->settings.javascript_enabled) {
