@@ -9,6 +9,8 @@
 #include "mustela/mustela.hpp"
 #include "mustela/view.hpp"
 
+#include "viewhost.hpp"
+
 KiwiTab* active_tab(Browser& b);
 
 namespace {
@@ -24,7 +26,7 @@ gint tab_index(const Browser& b, const KiwiTab* tab) {
 
 KiwiTab* tab_from_widget(Browser& b, GtkWidget* widget) {
     for (std::unique_ptr<KiwiTab>& tab : b.tabs) {
-        if (tab->view && static_cast<GtkWidget*>(tab->view->native_widget()) == widget) return tab.get();
+        if (tab->host && tab->host == widget) return tab.get();
     }
     return nullptr;
 }
@@ -486,100 +488,104 @@ void toggle_window_fullscreen(Browser& b) {
 gboolean on_key_press(GtkWidget*, GdkEventKey* event, gpointer) {
     Browser& b = *browser;
     GdkModifierType mods = static_cast<GdkModifierType>(event->state & gtk_accelerator_get_default_mod_mask());
+    return kiwi_shortcut(b, event->keyval, mods) ? TRUE : FALSE;
+}
+
+bool run_shortcut(Browser& b, guint keyval, GdkModifierType mods) {
     KiwiTab* tab = active_tab(b);
 
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_t) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_t) {
         open_tab(b, b.settings.homepage, b.privacy.default_private == mustela::TabPrivacy::Private);
         return TRUE;
     }
-    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && event->keyval == GDK_KEY_P) {
+    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && keyval == GDK_KEY_P) {
         open_tab(b, b.settings.homepage, true);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_w) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_w) {
         if (tab) close_tab(b, tab);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_l) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_l) {
         gtk_widget_grab_focus(b.url_entry);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_f) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_f) {
         toggle_find_bar(b, true);
         return TRUE;
     }
-    if (mods == 0 && event->keyval == GDK_KEY_F3) {
+    if (mods == 0 && keyval == GDK_KEY_F3) {
         if (tab && !b.find_query.empty()) tab->view->find_next();
         return TRUE;
     }
-    if (mods == GDK_SHIFT_MASK && event->keyval == GDK_KEY_F3) {
+    if (mods == GDK_SHIFT_MASK && keyval == GDK_KEY_F3) {
         if (tab && !b.find_query.empty()) tab->view->find_previous();
         return TRUE;
     }
-    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && event->keyval == GDK_KEY_I) {
+    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && keyval == GDK_KEY_I) {
         toggle_devtools(b);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_h) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_h) {
         open_history_window(b);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_j) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_j) {
         open_downloads_window(b);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_d) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_d) {
         toggle_bookmark(b);
         return TRUE;
     }
-    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && event->keyval == GDK_KEY_O) {
+    if (mods == (GDK_CONTROL_MASK | GDK_SHIFT_MASK) && keyval == GDK_KEY_O) {
         open_bookmarks_window(b);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_comma) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_comma) {
         open_settings_window(b);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_r) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_r) {
         if (tab) tab->view->reload();
         return TRUE;
     }
-    if (mods == 0 && event->keyval == GDK_KEY_F5) {
+    if (mods == 0 && keyval == GDK_KEY_F5) {
         if (tab) tab->view->reload();
         return TRUE;
     }
-    if (mods == GDK_MOD1_MASK && event->keyval == GDK_KEY_Left) {
+    if (mods == GDK_MOD1_MASK && keyval == GDK_KEY_Left) {
         if (tab) tab->view->go_back();
         return TRUE;
     }
-    if (mods == GDK_MOD1_MASK && event->keyval == GDK_KEY_Right) {
+    if (mods == GDK_MOD1_MASK && keyval == GDK_KEY_Right) {
         if (tab) tab->view->go_forward();
         return TRUE;
     }
     if (mods == GDK_CONTROL_MASK
-        && (event->keyval == GDK_KEY_plus || event->keyval == GDK_KEY_equal
-            || event->keyval == GDK_KEY_KP_Add)) {
+        && (keyval == GDK_KEY_plus || keyval == GDK_KEY_equal
+            || keyval == GDK_KEY_KP_Add)) {
         if (tab) tab->view->set_zoom(mustela::zoom_step(tab->view->zoom(), 1));
         return TRUE;
     }
     if (mods == GDK_CONTROL_MASK
-        && (event->keyval == GDK_KEY_minus || event->keyval == GDK_KEY_KP_Subtract)) {
+        && (keyval == GDK_KEY_minus || keyval == GDK_KEY_KP_Subtract)) {
         if (tab) tab->view->set_zoom(mustela::zoom_step(tab->view->zoom(), -1));
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && (event->keyval == GDK_KEY_0 || event->keyval == GDK_KEY_KP_0)) {
+    if (mods == GDK_CONTROL_MASK && (keyval == GDK_KEY_0 || keyval == GDK_KEY_KP_0)) {
         if (tab) tab->view->set_zoom(1.0);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_q) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_q) {
         gtk_widget_destroy(b.window);
         return TRUE;
     }
-    if (mods == GDK_CONTROL_MASK && event->keyval == GDK_KEY_s) {
+    if (mods == GDK_CONTROL_MASK && keyval == GDK_KEY_s) {
         save_page_as_mhtml(b);
         return TRUE;
     }
-    if (mods == 0 && event->keyval == GDK_KEY_F11) {
+    if (mods == 0 && keyval == GDK_KEY_F11) {
         toggle_window_fullscreen(b);
         return TRUE;
     }
@@ -739,20 +745,23 @@ mustela::ViewCallbacks make_tab_callbacks(Browser* b, KiwiTab* tab) {
         KiwiTab* created = new KiwiTab();
         created->view.reset(popup);
         created->private_tab = popup->is_private();
+        created->host = kiwi::view_page_widget(popup, GTK_WINDOW(b->window));
         b->tabs.emplace_back(created);
-        gint idx = gtk_notebook_append_page(GTK_NOTEBOOK(b->notebook),
-            static_cast<GtkWidget*>(popup->native_widget()),
+        gint idx = gtk_notebook_append_page(GTK_NOTEBOOK(b->notebook), created->host,
             build_tab_label(*b, created));
-        gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(b->notebook),
-            static_cast<GtkWidget*>(popup->native_widget()), TRUE);
-        gtk_widget_show(static_cast<GtkWidget*>(popup->native_widget()));
+        gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(b->notebook), created->host, TRUE);
+        gtk_widget_show(created->host);
         popup->set_callbacks(make_tab_callbacks(b, b->tabs.back().get()));
         (void)idx;
     };
     cb.popup_ready = [b](mustela::View* popup) {
-        GtkWidget* widget = static_cast<GtkWidget*>(popup->native_widget());
-        gint idx = gtk_notebook_page_num(GTK_NOTEBOOK(b->notebook), widget);
-        if (idx >= 0) gtk_notebook_set_current_page(GTK_NOTEBOOK(b->notebook), idx);
+        for (std::unique_ptr<KiwiTab>& tab : b->tabs) {
+            if (tab->view.get() == popup && tab->host) {
+                gint idx = gtk_notebook_page_num(GTK_NOTEBOOK(b->notebook), tab->host);
+                if (idx >= 0) gtk_notebook_set_current_page(GTK_NOTEBOOK(b->notebook), idx);
+                break;
+            }
+        }
         refresh_chrome(*b);
     };
     cb.close_requested = [b, tab]() {
@@ -792,16 +801,20 @@ KiwiTab* open_tab(Browser& b, const std::string& url, bool force_private) {
     tab->label = build_tab_label(b, tab);
     b.tabs.emplace_back(tab);
 
-    GtkWidget* widget = static_cast<GtkWidget*>(tab->view->native_widget());
-    gint idx = gtk_notebook_append_page(GTK_NOTEBOOK(b.notebook), widget, tab->label);
-    gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(b.notebook), widget, TRUE);
+    tab->host = kiwi::view_page_widget(tab->view.get(), GTK_WINDOW(b.window));
+    gint idx = gtk_notebook_append_page(GTK_NOTEBOOK(b.notebook), tab->host, tab->label);
+    gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(b.notebook), tab->host, TRUE);
     wire_tab_drops(tab);
     gtk_notebook_set_current_page(GTK_NOTEBOOK(b.notebook), idx);
-    gtk_widget_show(widget);
+    gtk_widget_show(tab->host);
 
     if (!url.empty()) tab->view->load_url(url);
     refresh_chrome(b);
     return tab;
+}
+
+bool kiwi_shortcut(Browser& b, guint keyval, GdkModifierType mods) {
+    return run_shortcut(b, keyval, mods);
 }
 
 void build_browser_ui(Browser& b, const char* startup_url) {
@@ -999,6 +1012,10 @@ void build_browser_ui(Browser& b, const char* startup_url) {
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(b.private_toggle), TRUE);
     }
     open_tab(b, startup_url && *startup_url ? startup_url : b.settings.homepage, b.start_private);
+
+    kiwi::install_shortcuts(GTK_WINDOW(window), [&b](guint kv, GdkModifierType m) {
+        return kiwi_shortcut(b, kv, m);
+    });
 
     gtk_widget_show_all(window);
 }

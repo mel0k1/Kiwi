@@ -13,6 +13,7 @@
 
 struct KiwiTab {
     std::unique_ptr<mustela::View> view;
+    GtkWidget* host = nullptr;
     GtkWidget* label = nullptr;
     GtkWidget* icon = nullptr;
     GtkWidget* title_label = nullptr;
@@ -70,6 +71,7 @@ struct Browser {
 };
 
 void build_browser_ui(Browser& b, const char* startup_url);
+bool kiwi_shortcut(Browser& b, guint keyval, GdkModifierType mods);
 KiwiTab* active_tab(Browser& b);
 KiwiTab* open_tab(Browser& b, const std::string& url, bool force_private = false);
 void close_tab(Browser& b, KiwiTab* tab);

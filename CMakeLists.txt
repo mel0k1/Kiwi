@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kiwi
-    VERSION 0.7.0
+    VERSION 0.8.0
     DESCRIPTION "Privacy-first web browser powered by the Mustela engine"
     LANGUAGES CXX)
 
@@ -18,13 +18,20 @@ if(NOT MUSTELA_BUILD_DIR)
     set(MUSTELA_BUILD_DIR "${MUSTELA_ROOT}/build")
 endif()
 
+if(WIN32)
+    set(MUSTELA_WEBKIT_SDK "" CACHE PATH "Mustela WebKit C API SDK (include/ and lib/ with import libraries or runtime DLLs)")
+    set(MUSTELA_VIEW_TARGET mustela_view_win)
+else()
+    set(MUSTELA_VIEW_TARGET mustela_view_gtk)
+endif()
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK REQUIRED gtk+-3.0)
 pkg_check_modules(SOUP REQUIRED libsoup-3.0)
 
 if(EXISTS "${MUSTELA_BUILD_DIR}/mustela-targets.cmake")
     include("${MUSTELA_BUILD_DIR}/mustela-targets.cmake")
-    set(MUSTELA_LINK_LIBS mustela::mustela_view_gtk mustela::mustela_core)
+    set(MUSTELA_LINK_LIBS mustela::${MUSTELA_VIEW_TARGET} mustela::mustela_core)
 else()
     find_file(MUSTELA_TARGETS_FILE mustela-targets.cmake
         HINTS
@@ -35,9 +42,9 @@ else()
             /usr/local/lib/cmake/mustela)
     if(MUSTELA_TARGETS_FILE)
         include("${MUSTELA_TARGETS_FILE}")
-        set(MUSTELA_LINK_LIBS mustela::mustela_view_gtk mustela::mustela_core)
+        set(MUSTELA_LINK_LIBS mustela::${MUSTELA_VIEW_TARGET} mustela::mustela_core)
     else()
-        set(MUSTELA_LINK_LIBS mustela_view_gtk mustela_core)
+        set(MUSTELA_LINK_LIBS ${MUSTELA_VIEW_TARGET} mustela_core)
     endif()
 endif()
 
@@ -47,7 +54,12 @@ add_executable(kiwi
     src/screens.cpp
     src/prefs.cpp
     src/context_menu.cpp
-    src/updater.cpp)
+    src/updater.cpp
+    src/viewhost.cpp)
+
+if(WIN32)
+    target_sources(kiwi PRIVATE src/viewhost_win.cpp)
+endif()
 
 target_include_directories(kiwi PRIVATE
     src
@@ -58,11 +70,18 @@ target_compile_definitions(kiwi PRIVATE
     KIWI_ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     KIWI_VERSION="${PROJECT_VERSION}")
 target_link_directories(kiwi PRIVATE ${GTK_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS} ${MUSTELA_BUILD_DIR})
+if(WIN32 AND MUSTELA_WEBKIT_SDK)
+    target_link_directories(kiwi PRIVATE ${MUSTELA_WEBKIT_SDK}/lib)
+endif()
 target_link_libraries(kiwi PRIVATE
     ${MUSTELA_LINK_LIBS}
     ${GTK_LIBRARIES}
     ${SOUP_LIBRARIES})
 target_compile_options(kiwi PRIVATE ${GTK_CFLAGS_OTHER} ${SOUP_CFLAGS_OTHER})
+
+if(WIN32 AND NOT MSVC)
+    target_link_options(kiwi PRIVATE -mwindows)
+endif()
 
 if(MSVC)
     target_compile_options(kiwi PRIVATE /W4)

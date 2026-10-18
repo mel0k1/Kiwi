@@ -19,7 +19,7 @@ Milestones are capability-based; dates are intentionally not assigned.
 
 - Per-site privacy overrides with visual indicators. (done, 0.2.0)
 - Storage and cookie management screens. (done, 0.2.0)
-- Import from other browsers.
+- Import from other browsers. (done, 0.7.0 — engine-side bookmark import plus the settings-screen import handler)
 
 ## K3 — Library and settings (done)
 
@@ -38,13 +38,20 @@ Milestones are capability-based; dates are intentionally not assigned.
 - Check for updates: an "About & updates" page in Settings with a manual "Check for updates" button — an on-demand query against the GitHub Releases API (libsoup, worker thread, progress in the same row), a platform asset picker (amd64 deb on Linux, exe/zip on Windows), semver comparison against the baked `KIWI_VERSION`, release notes preview, and a download into the user's Downloads directory with a "Show in folder" action. No background traffic, ever — the check happens only when the user presses the button. (done)
 - Linux deb: install rules for the binary, the hicolor icon, the `.desktop` file and the AppStream metainfo; CPack DEB with shlib-deps-generated runtime dependencies (GTK, WebKitGTK, libsoup); the engine's web-extension module ships inside the package when built from a Mustela checkout. (done)
 - Flatpak: `packaging/flatpak/io.github.mel0k1.Kiwi.yml` builds the engine (v0.23.0, view library on, web extension into `/app/lib/mustela/webext`) and Kiwi against the installed engine export targets on the GNOME 48 runtime; finish-args cover network, GPU, sockets, downloads and notifications. (done)
-- Windows: honest limit — MSYS2 removed the `webkit2gtk` packages from the mingw repository, so there is currently no maintained WebKitGTK Windows runtime to build against; the GTK-based Kiwi (like the engine's WinCairo harness, which stays separate) has no Windows package until that story changes. The deb, the Flatpak bundle and the update checker already pick per-platform assets, so a Windows package slots in without engine changes when a runtime appears.
+- Windows: the honest-limit story changed in 0.8.0 — there is still no WebKitGTK runtime on Windows, but Kiwi now builds against the engine's WinCairo-based view library (`mustela_view_win`) instead: the chrome stays GTK3 under MSYS2 MinGW-w64 and the web content comes from `libmustela_view_win`. A CI `windows` job builds engine + browser, runs the updater tests, packs a portable zip (WebKit runtime, GTK runtime, pixbuf loaders, launcher) and smoke-launches it. A signed installer and the release-asset hookup for the updater stay open. (portable zip done, 0.8.0; installer open)
 - Release channel: a tag-triggered job attaches the deb and the Flatpak bundle to the GitHub Release, which is exactly what the update checker reads. (done)
 
 ## Engine view slice 3 — fullscreen, notifications, MHTML (done, 0.6.0)
 
 - The engine view API moved 3 → 4 (Mustela v0.23.0): `ViewCallbacks::enter_fullscreen`/`leave_fullscreen`, `ViewCallbacks::notification(title, body)`, `View::save_mhtml(path, done)` and `suggested_save_name(title, uri)`. Kiwi consumes all of it: Ctrl+S opens a native save dialog (default folder from `downloads.dir` or the user Downloads directory, default name from `suggested_save_name`, MHTML filter, overwrite confirmation) and the status bar confirms the write; element fullscreen requests fullscreen the Kiwi window and leaving fullscreen restores it (F11 remains the manual toggle); notifications render through `GNotification` on a `GApplication` registered at startup (`io.github.mel0k1.Kiwi`, non-unique, held; without a session bus the registration fails quietly and notifications drop — same fail-safe shape as the engine harness).
-- Honest limits: MHTML is a snapshot of the current DOM without scripts and is save-only (WebKitGTK has no public MHTML load path); notification display still requires the engine permission flow (`permissions.notifications` + per-site rule) before the callback fires; none of the three surfaces exist on Windows while the engine has no view library there.
+- Honest limits: MHTML is a snapshot of the current DOM without scripts and is save-only (WebKitGTK has no public MHTML load path); notification display still requires the engine permission flow (`permissions.notifications` + per-site rule) before the callback fires; on Windows all three degrade to the engine's documented WinCairo pin no-ops. (limits)
+
+## Windows port (done, 0.8.0)
+
+- View hosting: the Windows view library hands out an `HWND` (`View::native_widget()`), so a small view-host layer (`src/viewhost*.cpp`) replaces the direct `GtkWidget*` casts — on Linux it stays a passthrough, on Windows each tab gets a `GtkDrawingArea` page whose map/unmap/size-allocate signals reparent (`SetParent`), position (`MoveWindow` from `gdk_window_get_origin` + `ScreenToClient`) and show/hide the native view. (done)
+- Shortcuts: a `WH_KEYBOARD` thread hook plus a subclassed window proc translate the key combinations into the shared `kiwi_shortcut` dispatcher while a web view holds keyboard focus (GTK accelerators do not see keys landing in a foreign child HWND); combos outside the table pass through untouched, dialogs are excluded via `GetForegroundWindow`. (done)
+- Build and bundle: MinGW-w64 (MSYS2) compiles engine core + `mustela_view_win` + Kiwi with zero MSVC-specific sources; import resolution goes straight through the runtime DLLs; the CI job assembles the portable zip (WebKit runtime + GTK/runtime DLLs via `ntldd` + gio modules + pixbuf loaders with a rewritten cache + glib schemas + a `kiwi.cmd` launcher) and smoke-launches the bundle. (done)
+- Honest limits: devtools, page saving (MHTML), notifications, HTML5 fullscreen and the edit-command bridge are engine-side no-ops on the WinCairo pin; the hosted view is not DPI-scaled yet; popups land as notebook tabs (same as Linux) but never surface on top of the web view; installer and updater asset hookup remain open. (limits)
 
 ## K5 — Identity (done, 0.6.0)
 
