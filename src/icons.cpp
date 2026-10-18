@@ -7,6 +7,11 @@
 #include <tuple>
 #include <utility>
 
+// MinGW hides M_PI under -std=c++17 (__STRICT_ANSI__); glibc does not.
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace kiwi {
 
 namespace {
