@@ -50,13 +50,6 @@ void apply_cef_settings(CefSettings& settings, bool sandboxed) {
     CefString(&settings.log_file) = rt->config_dir + "/cef.log";
 }
 
-bool cmdline_has_self_test(LPWSTR lpCmdLine) {
-    if (!lpCmdLine || !*lpCmdLine) return false;
-    // Match the flag anywhere in the command line; bootstrap.exe passes the
-    // original arguments through unmodified.
-    return std::wcsstr(lpCmdLine, L"--self-test") != nullptr;
-}
-
 }  // namespace
 
 }  // namespace kiwi
@@ -66,27 +59,31 @@ extern "C" __declspec(dllexport) int RunWinMain(HINSTANCE hInstance,
                                                 int nCmdShow,
                                                 void* sandbox_info,
                                                 cef_version_info_t* version_info) {
+    (void)lpCmdLine;
     (void)nCmdShow;
     (void)version_info;  // bootstrap installer metadata; informational
+
+    // Subprocesses (render/GPU/network/utility) re-enter here via kiwi.exe.
+    // The sandbox may already be locked down at this point: per the bootstrap
+    // contract nothing but CefExecuteProcess may run before it returns for a
+    // subprocess — no WinAPI, no file I/O, no DPI calls. Diagnostics and the
+    // self-test flag are handled strictly on the browser side after this call
+    // returns -1.
+    CefMainArgs args(hInstance);
+    CefRefPtr<kiwi::KiwiCefApp> app(new kiwi::KiwiCefApp());
+    int exit_code = CefExecuteProcess(args, app, sandbox_info);
+    if (exit_code >= 0) return exit_code;
+
+    // ---- browser process only from here on ----
 
     kiwi::install_crash_handler();
     kiwi::enable_per_monitor_dpi();
 
-    const bool self_test = kiwi::cmdline_has_self_test(lpCmdLine);
-    kiwi::trace_stage(std::string("RunWinMain enter: Kiwi " KIWI_VERSION
+    const bool self_test =
+        std::wcsstr(GetCommandLineW(), L"--self-test") != nullptr;
+    kiwi::trace_stage(std::string("browser process: Kiwi " KIWI_VERSION
         ", sandbox_context=") + (sandbox_info ? "yes" : "no")
         + ", self_test=" + (self_test ? "yes" : "no"));
-
-    CefMainArgs args(hInstance);
-    CefRefPtr<kiwi::KiwiCefApp> app(new kiwi::KiwiCefApp());
-
-    // Subprocesses (render/GPU/network) re-enter here via kiwi.exe; forward
-    // the sandbox context so they run sandboxed.
-    int exit_code = CefExecuteProcess(args, app, sandbox_info);
-    if (exit_code >= 0) {
-        kiwi::trace_stage("subprocess exit: " + std::to_string(exit_code));
-        return exit_code;
-    }
 
     try {
         kiwi::runtime_init();

@@ -20,6 +20,8 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 
+#include "diagnostics.hpp"
+
 #include <cstdint>
 #include <ctime>
 #include <cwchar>
@@ -332,11 +334,19 @@ private:
 };
 
 int CefShell::exec() {
-    if (!create_window()) return 1;
+    trace_stage("shell: create_window begin");
+    if (!create_window()) {
+        trace_stage("shell: create_window FAILED");
+        return 1;
+    }
+    trace_stage("shell: create_window ok, adding first tab");
     add_tab(start_uri(false), false);
+    trace_stage("shell: first tab submitted");
     activate_index(0);
     if (self_test_) start_self_test_watchdog();
+    trace_stage("shell: entering message loop");
     CefRunMessageLoop();
+    trace_stage("shell: message loop left");
     return self_test_ ? g_self_test_exit : 0;
 }
 

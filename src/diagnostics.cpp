@@ -143,7 +143,9 @@ std::string module_name_for(void* address) {
 LONG WINAPI kiwi_unhandled_exception(EXCEPTION_POINTERS* info) {
     void* frames[32];
     unsigned short count = RtlCaptureStackBackTrace(0, 32, frames, nullptr);
-    std::string line = "fatal exception 0x"
+    std::string line = "pid "
+        + std::to_string(GetCurrentProcessId())
+        + " fatal exception 0x"
         + std::to_string(info && info->ExceptionRecord
                 ? static_cast<unsigned long long>(info->ExceptionRecord->ExceptionCode)
                 : 0ull)
