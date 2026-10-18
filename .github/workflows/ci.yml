@@ -105,8 +105,28 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force build/bundle | Out-Null
-          Copy-Item build/Release/* build/bundle/ -Recurse -Force
+          Get-ChildItem build/Release -Exclude "kiwi_start_page_tests.exe","kiwi.exp","kiwi.lib" |
+            Copy-Item -Destination build/bundle -Recurse -Force
           Get-ChildItem build/bundle | Select-Object Name, Length
+
+      - name: Smoke (self-test on real Windows)
+        shell: pwsh
+        run: |
+          Remove-Item "$env:LOCALAPPDATA\kiwi\startup.log","$env:LOCALAPPDATA\kiwi\crash.log" -ErrorAction SilentlyContinue
+          $p = Start-Process -FilePath build/bundle/kiwi.exe -ArgumentList "--self-test" -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            $p.Kill()
+            throw "kiwi self-test timed out after 120s"
+          }
+          "kiwi self-test exit code: $($p.ExitCode)"
+          $startup = "$env:LOCALAPPDATA\kiwi\startup.log"
+          if (Test-Path $startup) { Get-Content $startup | ForEach-Object { "startup: $_" } }
+          $crash = "$env:LOCALAPPDATA\kiwi\crash.log"
+          if (Test-Path $crash) {
+            Get-Content $crash
+            throw "kiwi wrote crash.log during self-test"
+          }
+          if ($p.ExitCode -ne 0) { throw "kiwi self-test failed (exit $($p.ExitCode))" }
 
       - name: Pack zip
         shell: pwsh

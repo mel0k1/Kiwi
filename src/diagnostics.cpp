@@ -99,6 +99,27 @@ std::string diagnostics_dir() {
     return cached;
 }
 
+void trace_stage(const std::string& message) {
+    append_line(diagnostics_dir() + "/startup.log", message);
+}
+
+#ifdef _WIN32
+
+void fatal_dialog(const std::string& title, const std::string& detail) {
+    append_line(diagnostics_dir() + "/startup.log", "FATAL " + title + ": " + detail);
+    MessageBoxW(nullptr, to_wide_path(detail).c_str(), to_wide_path(title).c_str(),
+                MB_OK | MB_ICONERROR);
+}
+
+#else
+
+void fatal_dialog(const std::string& title, const std::string& detail) {
+    append_line(diagnostics_dir() + "/startup.log", "FATAL " + title + ": " + detail);
+    std::fprintf(stderr, "kiwi: %s: %s\n", title.c_str(), detail.c_str());
+}
+
+#endif
+
 #ifdef _WIN32
 
 namespace {

@@ -23,7 +23,11 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\kiwi.exe
-CloseApplications=no
+; Chromium (CEF 152) requires Windows 10 1607 or newer; older systems would
+; fail silently inside bootstrap.exe before our DLL is ever loaded.
+MinVersion=10.0
+; A running Kiwi keeps kiwi.dll locked; ask Windows to close it first.
+CloseApplications=yes
 RestartApplications=no
 
 [Tasks]
@@ -33,6 +37,12 @@ Name: "desktop"; Description: "{cm:CreateDesktopIcon}"; \
 [Files]
 Source: "..\..\build\bundle\*"; DestDir: "{app}"; \
     Flags: recursesubdirs createallsubdirs ignoreversion
+
+; The engine changed (GTK/WebKit 0.10 -> CEF 0.11+): stale GTK runtime files
+; from an older install must not survive next to the CEF bundle, otherwise a
+; mixed installation is created that fails at launch.
+[InstallDelete]
+Type: filesandordirs; Name: "{app}"
 
 [Icons]
 Name: "{autoprograms}\Kiwi"; Filename: "{app}\kiwi.exe"; WorkingDir: "{app}"

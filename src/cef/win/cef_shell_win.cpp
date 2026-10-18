@@ -24,6 +24,7 @@
 #include <ctime>
 #include <cwchar>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace kiwi {
@@ -31,6 +32,15 @@ namespace kiwi {
 namespace {
 
 constexpr wchar_t kWindowClass[] = L"KiwiCefShell";
+
+// Self-test: a helper thread waits for the first browser to be created, then
+// posts WM_APP_SELF_TEST to the shell window. The handler stores the result
+// and closes the window, so `kiwi.exe --self-test` runs headless-ish on CI.
+constexpr UINT WM_APP_SELF_TEST = WM_APP + 55;
+constexpr unsigned kSelfTestWaitMs = 15000;
+// Fail-safe default: the watchdog handler resets this to 0 only when a real
+// browser exists at check time. If the window dies earlier the test stays red.
+int g_self_test_exit = 2;
 constexpr COLORREF kInk = RGB(44, 62, 80);
 constexpr COLORREF kMuted = RGB(133, 146, 158);
 constexpr COLORREF kSurface = RGB(255, 245, 240);
@@ -236,6 +246,7 @@ class CefShell : public TabHost {
 public:
     int exec();
     void store_geometry();
+    void set_self_test(bool enabled) { self_test_ = enabled; }
 
 private:
     static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -258,6 +269,7 @@ private:
 
     int add_tab(const std::string& url, bool private_tab);
     void activate_index(int index);
+    void start_self_test_watchdog();
     void close_index(int index);
     void close_active_tab();
     void navigate_entry(const std::string& text);
@@ -310,6 +322,7 @@ private:
     int hover_item_ = -1;
     bool hover_close_ = false;
     int press_close_item_ = -1;
+    bool self_test_ = false;
 
     std::vector<WinTab> tabs_;
     int active_ = -1;
@@ -322,8 +335,17 @@ int CefShell::exec() {
     if (!create_window()) return 1;
     add_tab(start_uri(false), false);
     activate_index(0);
+    if (self_test_) start_self_test_watchdog();
     CefRunMessageLoop();
-    return 0;
+    return self_test_ ? g_self_test_exit : 0;
+}
+
+void CefShell::start_self_test_watchdog() {
+    HWND hwnd = hwnd_;
+    std::thread([hwnd]() {
+        Sleep(kSelfTestWaitMs);
+        if (IsWindow(hwnd)) PostMessageW(hwnd, WM_APP_SELF_TEST, 0, 0);
+    }).detach();
 }
 
 void CefShell::store_geometry() {
@@ -504,6 +526,10 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 if (tab.browser) tab.browser->GetHost()->CloseBrowser(false);
             }
             if (self->tabs_.empty()) DestroyWindow(hwnd);
+            return 0;
+        case WM_APP_SELF_TEST:
+            g_self_test_exit = self->active_browser() ? 0 : 2;
+            DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
             CefQuitMessageLoop();
@@ -1246,9 +1272,14 @@ void CefShell::on_hotkey(Hotkey key) {
     }
 }
 
-int cef_shell_main() {
+int cef_shell_main(bool self_test) {
     CefShell shell;
+    shell.set_self_test(self_test);
     return shell.exec();
+}
+
+int cef_self_test_exit_code() {
+    return g_self_test_exit;
 }
 
 }
