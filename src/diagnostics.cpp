@@ -14,7 +14,6 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <dbghelp.h>
 #endif
 
 namespace kiwi {
@@ -152,7 +151,7 @@ LONG WINAPI kiwi_unhandled_exception(EXCEPTION_POINTERS* info) {
         + " at 0x"
         + std::to_string(reinterpret_cast<unsigned long long>(
             info && info->ExceptionRecord ? info->ExceptionRecord->ExceptionAddress : nullptr));
-    for (unsigned short i = 0; i < count && i < 8; ++i) {
+    for (unsigned short i = 0; i < count && i < 32; ++i) {
         line += " | [" + std::to_string(i) + "] "
             + module_name_for(frames[i]) + "+0x";
         char suffix[32];
@@ -163,18 +162,41 @@ LONG WINAPI kiwi_unhandled_exception(EXCEPTION_POINTERS* info) {
     append_line(dir + "/crash.log", line);
 
     if (info) {
-        HANDLE process = GetCurrentProcess();
-        HANDLE file = CreateFileW(
-            to_wide_path(dir + "/crash.dmp").c_str(),
-            GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file != INVALID_HANDLE_VALUE) {
-            MINIDUMP_EXCEPTION_INFORMATION dump_info;
-            dump_info.ThreadId = GetCurrentThreadId();
-            dump_info.ExceptionPointers = info;
-            dump_info.ClientPointers = FALSE;
-            MiniDumpWriteDump(process, GetCurrentProcessId(), file, MiniDumpNormal,
-                &dump_info, nullptr, nullptr);
-            CloseHandle(file);
+        // dbghelp is loaded dynamically: kiwi.dll is loaded in every process
+        // (including sandboxed subprocesses via the bootstrap loader) and the
+        // static import would drag dbghelp into the sandbox for nothing — it
+        // is only ever used here, in the browser process crash path. The
+        // handful of dbghelp types are declared locally so <dbghelp.h> (and
+        // with it the static import) is not needed at all.
+        using MiniDumpType = int;  // MINIDUMP_TYPE, MiniDumpNormal == 0
+        struct MiniDumpExceptionInformation {
+            DWORD ThreadId;
+            EXCEPTION_POINTERS* ExceptionPointers;
+            BOOL ClientPointers;
+        };
+        using MiniDumpWriteDumpFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE,
+            MiniDumpType, MiniDumpExceptionInformation*, void*, void*);
+        HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll");
+        if (dbghelp) {
+            auto minidump = reinterpret_cast<MiniDumpWriteDumpFn>(
+                reinterpret_cast<std::uintptr_t>(
+                    GetProcAddress(dbghelp, "MiniDumpWriteDump")));
+            if (minidump) {
+                HANDLE process = GetCurrentProcess();
+                HANDLE file = CreateFileW(
+                    to_wide_path(dir + "/crash.dmp").c_str(),
+                    GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                    FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (file != INVALID_HANDLE_VALUE) {
+                    MiniDumpExceptionInformation dump_info;
+                    dump_info.ThreadId = GetCurrentThreadId();
+                    dump_info.ExceptionPointers = info;
+                    dump_info.ClientPointers = FALSE;
+                    minidump(process, GetCurrentProcessId(), file,
+                        0 /* MiniDumpNormal */, &dump_info, nullptr, nullptr);
+                    CloseHandle(file);
+                }
+            }
         }
     }
     return EXCEPTION_EXECUTE_HANDLER;

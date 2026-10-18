@@ -68,8 +68,7 @@ target_link_libraries(kiwi PRIVATE
     mustela_core
     libcef_lib
     libcef_dll_wrapper
-    comctl32
-    dbghelp)
+    comctl32)
 
 SET_LIBRARY_TARGET_PROPERTIES("kiwi")
 add_dependencies(kiwi libcef_dll_wrapper)
