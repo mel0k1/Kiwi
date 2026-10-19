@@ -84,6 +84,7 @@ struct WinTab {
     int find_id = 0;
     int find_count = 0;
     int find_active = 0;
+    bool wheel_subclassed = false;
 };
 
 std::wstring wide_from_utf8(const std::string& text) {
@@ -208,6 +209,8 @@ private:
                                          UINT_PTR id, DWORD_PTR data);
     static LRESULT CALLBACK find_entry_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
                                             UINT_PTR id, DWORD_PTR data);
+    static LRESULT CALLBACK browser_wheel_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                               UINT_PTR id, DWORD_PTR data);
 
     bool create_window();
     void create_controls();
@@ -227,6 +230,7 @@ private:
     void draw_tabs(HDC dc);
     void draw_tab(HDC dc, int index, const RECT& chip);
     void draw_rail(HDC dc);
+    void draw_devtools_split(HDC dc);
     void draw_status(HDC dc);
     void draw_find_bar(HDC dc);
     void draw_add_button(HDC dc, const RECT& rect);
@@ -239,6 +243,16 @@ private:
     int tab_at(const POINT& client_pt) const;
     int tool_at(const POINT& client_pt) const;
     bool chrome_is_drag_zone(const POINT& client_pt) const;
+
+    int max_tab_scroll() const;
+    void clamp_tab_scroll();
+    void ensure_tab_visible(int index);
+    void scroll_tabs(int delta);
+    RECT tab_thumb_rect() const;
+    int drop_slot_at(const POINT& client_pt) const;
+    RECT drag_ghost_rect() const;
+    void move_tab(int from, int to);
+    bool devtools_docked_visible() const;
 
     void sync_spin_timer();
     void set_tab_loading(int browser_id, bool loading);
@@ -313,6 +327,8 @@ private:
         RECT find_close = {};
         RECT find_label = {};
         RECT host = {};
+        RECT devtools = {};
+        RECT devtools_bar = {};
     } lay_;
 
     int find_seq_ = 0;
@@ -334,6 +350,24 @@ private:
     bool press_add_ = false;
     int hover_caption_ = -1;
     bool self_test_ = false;
+
+    int drag_tab_ = -1;
+    bool drag_active_ = false;
+    POINT drag_start_ = {};
+    POINT drag_pos_ = {};
+    int grab_dx_ = 0;
+    int grab_dy_ = 0;
+    int drop_slot_ = -1;
+    bool drag_thumb_ = false;
+    POINT grab_pos_ = {};
+    int grab_scroll_ = 0;
+    bool drag_split_ = false;
+    int tab_scroll_ = 0;
+
+    CefRefPtr<CefBrowser> devtools_browser_;
+    int devtools_tab_id_ = 0;
+    HWND devtools_hwnd_ = nullptr;
+    int devtools_split_ = 0;
 
     std::vector<WinTab> tabs_;
     int active_ = -1;
@@ -445,6 +479,17 @@ bool CefShell::create_window() {
     if (rt) favicons::set_profile_root(rt->profile_root);
     favicons::set_notifier([this]() {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    });
+    devtools_client_->set_on_created([this](CefRefPtr<CefBrowser> browser) {
+        devtools_browser_ = browser;
+        devtools_hwnd_ = browser->GetHost()->GetWindowHandle();
+        layout();
+    });
+    devtools_client_->set_on_closed([this](CefRefPtr<CefBrowser>) {
+        devtools_browser_ = nullptr;
+        devtools_hwnd_ = nullptr;
+        devtools_tab_id_ = 0;
+        if (!closing_) layout();
     });
 
     create_controls();
@@ -577,6 +622,46 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE, hwnd, 0};
             TrackMouseEvent(&track);
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            if (self->drag_split_) {
+                self->devtools_split_ = self->lay_.devtools.bottom - cl.y;
+                self->layout();
+                return 0;
+            }
+            if (self->drag_thumb_) {
+                int maxs = self->max_tab_scroll();
+                if (maxs > 0) {
+                    RECT thumb = self->tab_thumb_rect();
+                    int span = self->lay_.zen ? thumb.bottom - thumb.top
+                                              : thumb.right - thumb.left;
+                    int delta = self->lay_.zen ? cl.y - self->grab_pos_.y
+                                               : cl.x - self->grab_pos_.x;
+                    if (span > 0) {
+                        self->tab_scroll_ = self->grab_scroll_
+                            + MulDiv(delta, maxs, span);
+                        self->clamp_tab_scroll();
+                    }
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (self->drag_tab_ >= 0) {
+                if (!self->drag_active_) {
+                    int dx = cl.x - self->drag_start_.x;
+                    int dy = cl.y - self->drag_start_.y;
+                    if (dx < 0) dx = -dx;
+                    if (dy < 0) dy = -dy;
+                    int threshold = MulDiv(6, self->lay_.dpi, 96);
+                    if ((self->lay_.zen ? dy : dx) > threshold) {
+                        self->drag_active_ = true;
+                    }
+                }
+                if (self->drag_active_) {
+                    self->drag_pos_ = cl;
+                    self->drop_slot_ = self->drop_slot_at(cl);
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
             int tab = self->tab_at(cl);
             bool close = false;
             if (tab >= 0) {
@@ -676,6 +761,19 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         }
         case WM_LBUTTONDOWN: {
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            if (self->devtools_docked_visible() && PtInRect(&self->lay_.devtools_bar, cl)) {
+                self->drag_split_ = true;
+                SetCapture(hwnd);
+                return 0;
+            }
+            RECT thumb = self->tab_thumb_rect();
+            if (!IsRectEmpty(&thumb) && PtInRect(&thumb, cl)) {
+                self->drag_thumb_ = true;
+                self->grab_pos_ = cl;
+                self->grab_scroll_ = self->tab_scroll_;
+                SetCapture(hwnd);
+                return 0;
+            }
             int tab = self->tab_at(cl);
             if (tab >= 0) {
                 RECT chip = self->tab_chip_rect(tab, self->tab_width_for(
@@ -687,6 +785,16 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                     InvalidateRect(hwnd, nullptr, FALSE);
                     return 0;
                 }
+                self->drag_tab_ = tab;
+                self->drag_active_ = false;
+                self->drop_slot_ = tab;
+                self->drag_start_ = cl;
+                if (self->lay_.zen) {
+                    self->grab_dy_ = cl.y - chip.top;
+                } else {
+                    self->grab_dx_ = cl.x - chip.left;
+                }
+                SetCapture(hwnd);
                 self->activate_index(tab);
                 return 0;
             }
@@ -723,6 +831,25 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             bool captured = GetCapture() == hwnd;
             if (captured) ReleaseCapture();
+            if (self->drag_split_) {
+                self->drag_split_ = false;
+                return 0;
+            }
+            if (self->drag_thumb_) {
+                self->drag_thumb_ = false;
+                return 0;
+            }
+            if (self->drag_tab_ >= 0) {
+                int from = self->drag_tab_;
+                bool was_drag = self->drag_active_;
+                int to = self->drop_slot_;
+                self->drag_tab_ = -1;
+                self->drag_active_ = false;
+                self->drop_slot_ = -1;
+                if (was_drag && to >= 0 && to != from) self->move_tab(from, to);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (self->press_close_tab_ >= 0) {
                 int tab = self->press_close_tab_;
                 self->press_close_tab_ = -1;
@@ -777,6 +904,11 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             self->press_close_tab_ = -1;
             self->press_tool_ = -1;
             self->press_add_ = false;
+            self->drag_tab_ = -1;
+            self->drag_active_ = false;
+            self->drop_slot_ = -1;
+            self->drag_thumb_ = false;
+            self->drag_split_ = false;
             return 0;
         case WM_MBUTTONUP: {
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
@@ -798,6 +930,28 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
+        case WM_MOUSEWHEEL: {
+            POINT pt = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+            ScreenToClient(hwnd, &pt);
+            if (PtInRect(&self->lay_.tab_area, pt) && self->max_tab_scroll() > 0) {
+                int delta = static_cast<short>(GET_WHEEL_DELTA_WPARAM(wparam));
+                self->scroll_tabs(-delta);
+                return 0;
+            }
+            break;
+        }
+        case WM_SETCURSOR: {
+            if (LOWORD(lparam) == HTCLIENT) {
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hwnd, &pt);
+                if (self->devtools_docked_visible() && PtInRect(&self->lay_.devtools_bar, pt)) {
+                    SetCursor(LoadCursorW(nullptr, IDC_SIZENS));
+                    return TRUE;
+                }
+            }
+            break;
+        }
         case WM_GETMINMAXINFO: {
             auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
             info->ptMinTrackSize.x = scale_for(hwnd, 560);
@@ -893,6 +1047,20 @@ LRESULT CALLBACK CefShell::find_entry_proc(HWND hwnd, UINT msg, WPARAM wparam, L
         if (wparam == VK_ESCAPE) {
             self->close_find_bar();
             return 0;
+        }
+    }
+    return DefSubclassProc(hwnd, msg, wparam, lparam);
+}
+
+LRESULT CALLBACK CefShell::browser_wheel_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam,
+                                              UINT_PTR id, DWORD_PTR data) {
+    (void)id;
+    auto* self = reinterpret_cast<CefShell*>(data);
+    if (msg == WM_MOUSEWHEEL) {
+        POINT pt = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ScreenToClient(self->hwnd_, &pt);
+        if (self->max_tab_scroll() > 0 && PtInRect(&self->lay_.tab_area, pt)) {
+            return SendMessageW(self->hwnd_, WM_MOUSEWHEEL, wparam, lparam);
         }
     }
     return DefSubclassProc(hwnd, msg, wparam, lparam);
@@ -1013,11 +1181,36 @@ void CefShell::layout() {
     }
 
     lay_.status = {0, h - status_h, w, h};
+    if (devtools_docked_visible()) {
+        int max_split = (lay_.host.bottom - lay_.host.top) - MulDiv(160, dpi, 96);
+        int min_split = MulDiv(96, dpi, 96);
+        int split = devtools_split_;
+        if (split < min_split) split = min_split;
+        if (split > max_split) split = max_split;
+        if (split < min_split) split = min_split;
+        devtools_split_ = split;
+        lay_.devtools_bar = {lay_.host.left, lay_.host.bottom - split, lay_.host.right,
+                             lay_.host.bottom - split + MulDiv(4, dpi, 96)};
+        lay_.devtools = {lay_.host.left, lay_.devtools_bar.bottom, lay_.host.right,
+                         lay_.host.bottom};
+        lay_.host.bottom = lay_.devtools_bar.top;
+    }
+    clamp_tab_scroll();
     MoveWindow(host_, lay_.host.left, lay_.host.top,
         lay_.host.right - lay_.host.left, lay_.host.bottom - lay_.host.top, TRUE);
     MoveWindow(omnibox_, lay_.omnibox.left, lay_.omnibox.top,
         lay_.omnibox.right - lay_.omnibox.left,
         lay_.omnibox.bottom - lay_.omnibox.top, TRUE);
+    if (devtools_hwnd_) {
+        if (devtools_docked_visible()) {
+            MoveWindow(devtools_hwnd_, lay_.devtools.left, lay_.devtools.top,
+                lay_.devtools.right - lay_.devtools.left,
+                lay_.devtools.bottom - lay_.devtools.top, TRUE);
+            ShowWindow(devtools_hwnd_, SW_SHOW);
+        } else {
+            ShowWindow(devtools_hwnd_, SW_HIDE);
+        }
+    }
     if (find_visible_) {
         MoveWindow(find_entry_, lay_.find_entry.left, lay_.find_entry.top,
             lay_.find_entry.right - lay_.find_entry.left,
@@ -1030,6 +1223,11 @@ void CefShell::layout() {
     for (int i = 0; i < static_cast<int>(tabs_.size()); ++i) {
         if (!tabs_[i].browser) continue;
         HWND browser_hwnd = tabs_[i].browser->GetHost()->GetWindowHandle();
+        if (!tabs_[i].wheel_subclassed) {
+            SetWindowSubclass(browser_hwnd, browser_wheel_proc, 2,
+                reinterpret_cast<DWORD_PTR>(this));
+            tabs_[i].wheel_subclassed = true;
+        }
         if (i == active_) {
             MoveWindow(browser_hwnd, lay_.host.left, lay_.host.top,
                 lay_.host.right - lay_.host.left > 0 ? lay_.host.right - lay_.host.left : 0,
@@ -1071,6 +1269,161 @@ int CefShell::visible_tab_count() const {
     return n < maxv ? n : maxv;
 }
 
+int CefShell::max_tab_scroll() const {
+    int n = static_cast<int>(tabs_.size());
+    if (n < 2) return 0;
+    int dpi = lay_.dpi;
+    if (lay_.zen) {
+        int pitch = MulDiv(38, dpi, 96);
+        int content = n * pitch;
+        int avail = lay_.tab_area.bottom - lay_.tab_area.top;
+        return content > avail ? content - avail : 0;
+    }
+    int gap = MulDiv(2, dpi, 96);
+    int tab_w = tab_width_for(n);
+    int content = n * (tab_w + gap);
+    int avail = (lay_.tab_area.right - lay_.tab_area.left)
+        - (MulDiv(28, dpi, 96) + gap);
+    return content > avail ? content - avail : 0;
+}
+
+void CefShell::clamp_tab_scroll() {
+    int maxs = max_tab_scroll();
+    if (tab_scroll_ < 0) tab_scroll_ = 0;
+    if (tab_scroll_ > maxs) tab_scroll_ = maxs;
+}
+
+void CefShell::scroll_tabs(int delta) {
+    tab_scroll_ += delta;
+    clamp_tab_scroll();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void CefShell::ensure_tab_visible(int index) {
+    int n = static_cast<int>(tabs_.size());
+    if (index < 0 || index >= n) return;
+    int maxs = max_tab_scroll();
+    if (maxs <= 0) {
+        tab_scroll_ = 0;
+        return;
+    }
+    int dpi = lay_.dpi;
+    if (lay_.zen) {
+        int pitch = MulDiv(38, dpi, 96);
+        int height = MulDiv(34, dpi, 96);
+        int top_eff = lay_.tab_area.top + index * pitch;
+        if (top_eff - tab_scroll_ < lay_.tab_area.top) {
+            tab_scroll_ = top_eff - lay_.tab_area.top;
+        }
+        if (top_eff + height - tab_scroll_ > lay_.tab_area.bottom) {
+            tab_scroll_ = top_eff + height - lay_.tab_area.bottom;
+        }
+    } else {
+        int gap = MulDiv(2, dpi, 96);
+        int tab_w = tab_width_for(n);
+        int left_eff = lay_.tab_area.left + index * (tab_w + gap);
+        int margin = MulDiv(30, dpi, 96);
+        if (left_eff - tab_scroll_ < lay_.tab_area.left) {
+            tab_scroll_ = left_eff - lay_.tab_area.left;
+        }
+        if (left_eff + tab_w - tab_scroll_ > lay_.tab_area.right - margin) {
+            tab_scroll_ = left_eff + tab_w - lay_.tab_area.right + margin;
+        }
+    }
+    clamp_tab_scroll();
+}
+
+RECT CefShell::tab_thumb_rect() const {
+    int maxs = max_tab_scroll();
+    if (maxs <= 0) return {};
+    int n = static_cast<int>(tabs_.size());
+    int dpi = lay_.dpi;
+    RECT area = lay_.tab_area;
+    if (lay_.zen) {
+        int track = area.bottom - area.top;
+        int content = n * MulDiv(38, dpi, 96);
+        int len = track > 0 ? MulDiv(track, track, content) : 0;
+        int min_len = MulDiv(24, dpi, 96);
+        if (len < min_len) len = min_len;
+        if (len > track) len = track;
+        int y = area.top + MulDiv(tab_scroll_, track - len, maxs);
+        int right = area.right - MulDiv(2, dpi, 96);
+        return {right - MulDiv(4, dpi, 96), y, right, y + len};
+    }
+    int gap = MulDiv(2, dpi, 96);
+    int track = area.right - area.left;
+    int content = n * (tab_width_for(n) + gap);
+    int len = track > 0 ? MulDiv(track, track, content) : 0;
+    int min_len = MulDiv(24, dpi, 96);
+    if (len < min_len) len = min_len;
+    if (len > track) len = track;
+    int x = area.left + MulDiv(tab_scroll_, track - len, maxs);
+    return {x, area.bottom - MulDiv(5, dpi, 96), x + len, area.bottom - MulDiv(1, dpi, 96)};
+}
+
+int CefShell::drop_slot_at(const POINT& cl) const {
+    int n = static_cast<int>(tabs_.size());
+    if (n < 2) return 0;
+    int dpi = lay_.dpi;
+    if (lay_.zen) {
+        int pitch = MulDiv(38, dpi, 96);
+        int ghost_top_eff = cl.y - grab_dy_ + tab_scroll_;
+        int slot = (ghost_top_eff - lay_.tab_area.top + pitch / 2) / pitch;
+        if (slot < 0) slot = 0;
+        if (slot > n - 1) slot = n - 1;
+        return slot;
+    }
+    int gap = MulDiv(2, dpi, 96);
+    int pitch = tab_width_for(n) + gap;
+    int ghost_left_eff = cl.x - grab_dx_ + tab_scroll_;
+    int slot = (ghost_left_eff - lay_.tab_area.left + pitch / 2) / pitch;
+    if (slot < 0) slot = 0;
+    if (slot > n - 1) slot = n - 1;
+    return slot;
+}
+
+RECT CefShell::drag_ghost_rect() const {
+    int n = static_cast<int>(tabs_.size());
+    RECT chip = tab_chip_rect(drag_tab_, tab_width_for(n));
+    if (lay_.zen) {
+        int height = chip.bottom - chip.top;
+        chip.top = drag_pos_.y - grab_dy_;
+        chip.bottom = chip.top + height;
+        return chip;
+    }
+    int width = chip.right - chip.left;
+    int slot = drop_slot_ >= 0 && drop_slot_ < n ? drop_slot_ : drag_tab_;
+    RECT row = tab_chip_rect(slot, tab_width_for(n));
+    chip.left = drag_pos_.x - grab_dx_;
+    chip.right = chip.left + width;
+    chip.top = row.top;
+    chip.bottom = row.bottom;
+    return chip;
+}
+
+void CefShell::move_tab(int from, int to) {
+    int n = static_cast<int>(tabs_.size());
+    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
+    WinTab tab = std::move(tabs_[static_cast<size_t>(from)]);
+    tabs_.erase(tabs_.begin() + from);
+    tabs_.insert(tabs_.begin() + to, std::move(tab));
+    if (active_ == from) {
+        active_ = to;
+    } else if (from < active_ && to >= active_) {
+        --active_;
+    } else if (from > active_ && to <= active_) {
+        ++active_;
+    }
+    ensure_tab_visible(active_);
+    layout();
+}
+
+bool CefShell::devtools_docked_visible() const {
+    if (!devtools_hwnd_ || devtools_tab_id_ == 0) return false;
+    if (active_ < 0 || active_ >= static_cast<int>(tabs_.size())) return false;
+    return tabs_[static_cast<size_t>(active_)].browser_id == devtools_tab_id_;
+}
+
 RECT CefShell::tab_chip_rect(int index, int tab_w) const {
     int dpi = lay_.dpi;
     RECT rect;
@@ -1079,12 +1432,12 @@ RECT CefShell::tab_chip_rect(int index, int tab_w) const {
         int height = MulDiv(34, dpi, 96);
         rect.left = lay_.tab_area.left + MulDiv(6, dpi, 96);
         rect.right = lay_.tab_area.right - MulDiv(6, dpi, 96);
-        rect.top = lay_.tab_area.top + index * pitch;
+        rect.top = lay_.tab_area.top + index * pitch - tab_scroll_;
         rect.bottom = rect.top + height;
         return rect;
     }
     int gap = MulDiv(2, dpi, 96);
-    rect.left = lay_.tab_area.left + index * (tab_w + gap);
+    rect.left = lay_.tab_area.left + index * (tab_w + gap) - tab_scroll_;
     rect.right = rect.left + tab_w;
     rect.top = lay_.tab_area.top + MulDiv(4, dpi, 96);
     rect.bottom = lay_.tab_area.bottom - MulDiv(2, dpi, 96);
@@ -1109,6 +1462,11 @@ RECT CefShell::add_btn_rect() const {
         int add = MulDiv(34, dpi, 96);
         return {MulDiv(8, dpi, 96), lay_.rail.top + MulDiv(6, dpi, 96),
                 MulDiv(8, dpi, 96) + add, lay_.rail.top + MulDiv(6, dpi, 96) + add};
+    }
+    if (max_tab_scroll() > 0) {
+        int left = lay_.tab_area.right - size - MulDiv(2, dpi, 96);
+        int top = (lay_.tab_area.top + lay_.tab_area.bottom - size) / 2;
+        return {left, top, left + size, top + size};
     }
     int visible = visible_tab_count();
     int right;
@@ -1135,17 +1493,19 @@ int CefShell::tab_at(const POINT& cl) const {
     }
     if (lay_.zen) {
         int pitch = MulDiv(38, dpi, 96);
-        int idx = (cl.y - lay_.tab_area.top) / pitch;
+        int height = MulDiv(34, dpi, 96);
+        int idx = (cl.y + tab_scroll_ - lay_.tab_area.top) / pitch;
         if (idx < 0 || idx >= n) return -1;
+        int chip_top = lay_.tab_area.top + idx * pitch - tab_scroll_;
+        if (cl.y > chip_top + height) return -1;
         return idx;
     }
     int gap = MulDiv(2, dpi, 96);
     int tab_w = tab_width_for(n);
     int pitch = tab_w + gap;
-    int idx = (cl.x - lay_.tab_area.left) / pitch;
+    int idx = (cl.x + tab_scroll_ - lay_.tab_area.left) / pitch;
     if (idx < 0 || idx >= n) return -1;
-    if (idx >= visible_tab_count()) return -1;
-    int x0 = lay_.tab_area.left + idx * pitch;
+    int x0 = lay_.tab_area.left + idx * pitch - tab_scroll_;
     if (cl.x > x0 + tab_w) return -1;
     return idx;
 }
@@ -1174,6 +1534,9 @@ bool CefShell::chrome_is_drag_zone(const POINT& cl) const {
         }
     }
     if (tab_at(cl) >= 0) return false;
+    RECT thumb = tab_thumb_rect();
+    if (!IsRectEmpty(&thumb) && PtInRect(&thumb, cl)) return false;
+    if (devtools_docked_visible() && PtInRect(&lay_.devtools_bar, cl)) return false;
     if (PtInRect(&lay_.min_btn, cl) || PtInRect(&lay_.max_btn, cl)
         || PtInRect(&lay_.close_btn, cl)) {
         return false;
@@ -1208,6 +1571,7 @@ void CefShell::draw_chrome(HDC dc, const RECT& client, bool direct) {
     draw_omnibox(dc);
     draw_tool_buttons(dc, direct);
     draw_find_bar(dc);
+    draw_devtools_split(dc);
     draw_status(dc);
     draw_caption_buttons(dc);
 }
@@ -1232,24 +1596,38 @@ void CefShell::draw_rail(HDC dc) {
     fill_rect_color(dc, line, pal.separator);
 }
 
+void CefShell::draw_devtools_split(HDC dc) {
+    if (!devtools_docked_visible()) return;
+    fill_rect_color(dc, lay_.devtools_bar, gfx::palette().separator);
+}
+
 void CefShell::draw_tabs(HDC dc) {
     int n = static_cast<int>(tabs_.size());
     if (!n) return;
     draw_add_button(dc, lay_.add_btn);
-    if (lay_.zen) {
-        int pitch = MulDiv(38, lay_.dpi, 96);
-        int area_h = lay_.tab_area.bottom - lay_.tab_area.top;
-        int maxv = area_h > 0 ? area_h / pitch : 0;
-        int count = n < maxv ? n : maxv;
-        for (int i = 0; i < count; ++i) {
-            draw_tab(dc, i, tab_chip_rect(i, 0));
-        }
-        return;
+    std::vector<int> order(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) order[static_cast<size_t>(i)] = i;
+    if (drag_active_ && drag_tab_ >= 0 && drag_tab_ < n) {
+        order.erase(order.begin() + drag_tab_);
+        int slot = drop_slot_ >= 0 && drop_slot_ < n ? drop_slot_ : n - 1;
+        order.insert(order.begin() + slot, drag_tab_);
     }
-    int count = visible_tab_count();
+    int saved = SaveDC(dc);
+    IntersectClipRect(dc, lay_.tab_area.left, lay_.tab_area.top,
+        lay_.tab_area.right, lay_.tab_area.bottom);
     int tab_w = tab_width_for(n);
-    for (int i = 0; i < count; ++i) {
-        draw_tab(dc, i, tab_chip_rect(i, tab_w));
+    for (int slot = 0; slot < n; ++slot) {
+        int idx = order[static_cast<size_t>(slot)];
+        if (drag_active_ && idx == drag_tab_) continue;
+        draw_tab(dc, idx, tab_chip_rect(slot, tab_w));
+    }
+    if (drag_active_ && drag_tab_ >= 0 && drag_tab_ < n) {
+        draw_tab(dc, drag_tab_, drag_ghost_rect());
+    }
+    RestoreDC(dc, saved);
+    RECT thumb = tab_thumb_rect();
+    if (!IsRectEmpty(&thumb)) {
+        fill_round_rect(dc, thumb, 2, lay_.dpi, gfx::palette().chrome_muted);
     }
 }
 
@@ -1534,6 +1912,7 @@ int CefShell::add_tab(const std::string& url, bool private_tab) {
 void CefShell::activate_index(int index) {
     if (index < 0 || index >= static_cast<int>(tabs_.size())) return;
     active_ = index;
+    ensure_tab_visible(index);
     layout();
     update_omnibox();
     update_window_title();
@@ -1620,17 +1999,28 @@ void CefShell::toggle_bookmark() {
 }
 
 void CefShell::toggle_devtools() {
+    if (CefRefPtr<CefBrowser> docked = devtools_browser_) {
+        docked->GetHost()->CloseDevTools();
+        return;
+    }
+    if (devtools_tab_id_ != 0) return;
     CefRefPtr<CefBrowser> browser = active_browser();
     if (!browser) return;
-    CefRefPtr<CefBrowserHost> host = browser->GetHost();
-    if (host->HasDevTools()) {
-        host->CloseDevTools();
-    } else {
-        // Empty window info: CEF creates its own popup window for the
-        // DevTools browser; DevToolsClient keeps it out of the tab strip.
-        host->ShowDevTools(CefWindowInfo(), devtools_client_, CefBrowserSettings(),
-            CefPoint());
+    if (devtools_split_ <= 0) {
+        RECT client;
+        GetClientRect(hwnd_, &client);
+        devtools_split_ = MulDiv(client.bottom - client.top, 2, 5);
     }
+    CefWindowInfo info;
+    info.SetAsChild(hwnd_, CefRect(0, 0, 10, 10));
+    // Docked DevTools is a child-HWND browser, so it needs the same Alloy
+    // runtime style as the tab browsers (windowed hosting is Alloy-only in
+    // CEF 152). The layout reserves a bottom area for it once the shell
+    // learns the browser was created via the DevToolsClient lifespan hook.
+    info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+    devtools_tab_id_ = browser->GetIdentifier();
+    browser->GetHost()->ShowDevTools(info, devtools_client_, CefBrowserSettings(),
+        CefPoint());
 }
 
 void CefShell::open_find_bar() {

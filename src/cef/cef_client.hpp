@@ -2,6 +2,8 @@
 
 #include "cef_bridge.hpp"
 
+#include <functional>
+
 #include "include/cef_client.h"
 #include "include/cef_context_menu_handler.h"
 #include "include/cef_download_handler.h"
@@ -16,14 +18,36 @@ namespace kiwi {
 // request-level privacy surface — tracker blocklist, ping and font blocking,
 // third-party cookie filtering, media-access denial, downloads into the
 // user downloads directory and the keyboard shortcut bridge.
-// Minimal client for the DevTools popup browser. It intentionally forwards
-// nothing to the shell: the DevTools browser must never land in the tab
-// strip or drive the omnibox.
-class DevToolsClient : public CefClient {
+// Client for the docked DevTools browser. It still forwards nothing to the
+// tab shell: the DevTools browser must never land in the tab strip or drive
+// the omnibox. The only hook is a narrow lifespan callback so the shell can
+// capture the child HWND, position it into the docked area and release it
+// when the browser goes away.
+class DevToolsClient : public CefClient,
+                       public CefLifeSpanHandler {
 public:
     DevToolsClient() = default;
 
+    CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+
+    void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
+        if (on_created_) on_created_(browser);
+    }
+    void OnBeforeClose(CefRefPtr<CefBrowser> browser) override {
+        if (on_closed_) on_closed_(browser);
+    }
+
+    void set_on_created(std::function<void(CefRefPtr<CefBrowser>)> fn) {
+        on_created_ = std::move(fn);
+    }
+    void set_on_closed(std::function<void(CefRefPtr<CefBrowser>)> fn) {
+        on_closed_ = std::move(fn);
+    }
+
 private:
+    std::function<void(CefRefPtr<CefBrowser>)> on_created_;
+    std::function<void(CefRefPtr<CefBrowser>)> on_closed_;
+
     IMPLEMENT_REFCOUNTING(DevToolsClient);
     DISALLOW_COPY_AND_ASSIGN(DevToolsClient);
 };
