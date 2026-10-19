@@ -10,4 +10,9 @@ namespace kiwi {
 // caller can relayout immediately.
 void open_settings_window(HWND owner, std::function<void()> on_style_changed);
 
+// Re-reads the persisted rail side into every open settings window. The
+// zen-rail drag gesture writes style.toml directly, bypassing the dialog;
+// without this the "Panel side" combo would go stale while the dialog is up.
+void sync_settings_rail_side();
+
 }  // namespace kiwi

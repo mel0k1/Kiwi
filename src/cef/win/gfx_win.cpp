@@ -161,6 +161,36 @@ const std::vector<ThemeSpec>& theme_table() {
             a.outline = RGB(213, 205, 184);
             t.push_back({"solarized", false, p, a});
         }
+        {
+            Palette p; AuxTheme a;
+            // Sakura (pastel pink paper, rose accent)
+            p.chrome_bg = RGB(250, 237, 242);    p.chrome_text = RGB(92, 62, 74);
+            p.chrome_muted = RGB(168, 130, 146); p.active_tab_bg = RGB(255, 250, 252);
+            p.hover_chip = RGB(245, 224, 232);   p.pressed_chip = RGB(238, 211, 222);
+            p.outline = RGB(235, 209, 220);      p.omnibox_bg = RGB(255, 252, 253);
+            p.omnibox_border = RGB(233, 205, 216); p.omnibox_focus = RGB(228, 115, 154);
+            p.accent = RGB(228, 115, 154);       p.separator = RGB(240, 219, 228);
+            p.content_bg = RGB(255, 251, 252);   p.danger_hover = RGB(214, 78, 110);
+            a.surface = RGB(247, 232, 238);      a.ink = RGB(92, 62, 74);
+            a.muted = RGB(168, 130, 146);        a.field_bg = RGB(255, 252, 253);
+            a.outline = RGB(233, 205, 216);
+            t.push_back({"sakura", false, p, a});
+        }
+        {
+            Palette p; AuxTheme a;
+            // Crimson (warm near-black, red accent)
+            p.chrome_bg = RGB(24, 20, 21);       p.chrome_text = RGB(235, 226, 226);
+            p.chrome_muted = RGB(168, 148, 150); p.active_tab_bg = RGB(43, 33, 35);
+            p.hover_chip = RGB(36, 27, 29);      p.pressed_chip = RGB(51, 39, 41);
+            p.outline = RGB(66, 49, 52);         p.omnibox_bg = RGB(33, 25, 27);
+            p.omnibox_border = RGB(72, 52, 56);  p.omnibox_focus = RGB(230, 82, 88);
+            p.accent = RGB(230, 82, 88);         p.separator = RGB(45, 34, 36);
+            p.content_bg = RGB(24, 20, 21);      p.danger_hover = RGB(255, 107, 112);
+            a.surface = RGB(18, 14, 15);         a.ink = RGB(235, 226, 226);
+            a.muted = RGB(168, 148, 150);        a.field_bg = RGB(36, 27, 29);
+            a.outline = RGB(72, 52, 56);
+            t.push_back({"crimson", true, p, a});
+        }
         return t;
     }();
     return table;
@@ -410,7 +440,8 @@ bool system_prefers_dark() {
 
 const std::vector<std::string>& theme_names() {
     static const std::vector<std::string> names = {
-        "auto", "light", "dark", "nord", "dracula", "catppuccin", "solarized"
+        "auto", "light", "dark", "nord", "dracula", "catppuccin", "solarized",
+        "sakura", "crimson"
     };
     return names;
 }

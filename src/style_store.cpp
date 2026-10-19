@@ -42,7 +42,8 @@ void write_style_file(const std::string& config_dir, const std::string& style,
         "transparency = \"%s\"\n"
         "# Docked devtools edge: bottom, left or right\n"
         "devtools_dock = \"%s\"\n"
-        "# Chrome color theme: auto, light, dark, nord, dracula, catppuccin or solarized\n"
+        "# Chrome color theme: auto, light, dark, nord, dracula, catppuccin, "
+        "solarized, sakura or crimson\n"
         "theme = \"%s\"\n"
         "# Accent override over the theme palette: empty for the theme default or #RRGGBB\n"
         "accent = \"%s\"\n"
@@ -165,7 +166,7 @@ void save_shell_devtools_dock(const std::string& config_dir, const std::string& 
 bool is_valid_shell_theme(const std::string& theme) {
     return theme == "auto" || theme == "light" || theme == "dark"
         || theme == "nord" || theme == "dracula" || theme == "catppuccin"
-        || theme == "solarized";
+        || theme == "solarized" || theme == "sakura" || theme == "crimson";
 }
 
 std::string load_shell_theme(const std::string& config_dir) {

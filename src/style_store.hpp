@@ -39,7 +39,7 @@ bool is_valid_shell_devtools_dock(const std::string& dock);
 
 // Chrome color theme: "auto" (follow the Windows app mode, default), "light",
 // "dark" or one of the ready-made palettes ("nord", "dracula", "catppuccin",
-// "solarized"). Unknown values fall back to "auto".
+// "solarized", "sakura", "crimson"). Unknown values fall back to "auto".
 std::string load_shell_theme(const std::string& config_dir);
 void save_shell_theme(const std::string& config_dir, const std::string& theme);
 bool is_valid_shell_theme(const std::string& theme);

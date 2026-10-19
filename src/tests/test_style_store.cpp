@@ -138,6 +138,27 @@ int main() {
         expect(kiwi::load_shell_style(dir) == "zen", "style survived rejections");
     }
 
+    // Ready-made themes: the full set validates and round-trips, including
+    // the 0.21.0 sakura (pastel pink) and crimson (black-red) palettes.
+    {
+        std::string dir = dir_with("themes");
+        for (const char* name : {"auto", "light", "dark", "nord", "dracula",
+                                 "catppuccin", "solarized", "sakura", "crimson"}) {
+            expect(kiwi::is_valid_shell_theme(name),
+                   std::string("valid theme ") + name);
+            kiwi::save_shell_theme(dir, name);
+            expect(kiwi::load_shell_theme(dir) == name,
+                   std::string("theme roundtrip ") + name);
+        }
+        expect(!kiwi::is_valid_shell_theme("rose"), "unknown theme rejected");
+        kiwi::save_shell_theme(dir, "sakura");
+        kiwi::save_shell_rail_side(dir, "right");
+        expect(kiwi::load_shell_rail_side(dir) == "right",
+               "rail survives theme save");
+        expect(kiwi::load_shell_theme(dir) == "sakura",
+               "theme survives rail save");
+    }
+
     if (g_failures == 0) {
         std::cout << "style_store smoke: all cases passed\n";
         return 0;

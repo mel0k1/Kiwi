@@ -98,8 +98,14 @@ constexpr SectionDef kSections[SECTION_COUNT] = {
     {L"Data", L"Data and updates", gfx::Glyph::Database},
 };
 
-constexpr int kThemeChipCount = 7;  // gfx::theme_names().size()
+constexpr int kThemeChipCount = 9;  // gfx::theme_names().size()
 constexpr UINT_PTR kFlashTimer = 1;
+
+// Window message that re-reads the persisted rail side into the dialog: the
+// zen-rail drag gesture in the shell writes style.toml directly and then
+// pokes every open settings window through sync_settings_rail_side(), so
+// the "Panel side" combo never goes stale while the dialog is up.
+constexpr UINT kSyncRailSideMsg = WM_APP + 0x51;
 
 struct SettingsState {
     HWND hwnd = nullptr;
@@ -703,6 +709,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (!st) return DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
+        case kSyncRailSideMsg: {
+            Runtime* rt = runtime();
+            if (rt) {
+                st->original_rail_side = kiwi::load_shell_rail_side(rt->config_dir);
+                SendMessageW(GetDlgItem(hwnd, ID_RAILSIDE), CB_SETCURSEL,
+                             st->original_rail_side == "right" ? 1 : 0, 0);
+            }
+            return 0;
+        }
         case WM_PAINT: {
             PAINTSTRUCT ps;
             HDC dc = BeginPaint(hwnd, &ps);
@@ -853,6 +868,16 @@ HWND add_item(SettingsState* st, int id, int section, const wchar_t* cls,
 }
 
 }  // namespace
+
+void sync_settings_rail_side() {
+    EnumWindows([](HWND hwnd, LPARAM) -> BOOL {
+        wchar_t cls[32];
+        if (GetClassNameW(hwnd, cls, 32) && wcscmp(cls, kClass) == 0) {
+            SendMessageW(hwnd, kSyncRailSideMsg, 0, 0);
+        }
+        return TRUE;
+    }, 0);
+}
 
 void open_settings_window(HWND owner, std::function<void()> on_style_changed) {
     static bool registered = false;

@@ -281,6 +281,8 @@ private:
     void ensure_tab_visible(int index);
     void scroll_tabs(int delta);
     RECT tab_thumb_rect() const;
+    RECT rail_grip_rect() const;
+    void flip_rail_side(const std::string& side);
     int drop_slot_at(const POINT& client_pt) const;
     RECT drag_ghost_rect() const;
     void move_tab(int from, int to);
@@ -407,6 +409,9 @@ private:
     POINT grab_pos_ = {};
     int grab_scroll_ = 0;
     bool drag_split_ = false;
+    bool drag_rail_ = false;
+    bool rail_flip_done_ = false;
+    bool hover_rail_grip_ = false;
     int tab_scroll_ = 0;
 
     int devtools_dock_ = DOCK_BOTTOM;
@@ -768,6 +773,20 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 }
                 return 0;
             }
+            if (self->drag_rail_) {
+                int dx = cl.x - self->grab_pos_.x;
+                int threshold = MulDiv(56, self->lay_.dpi, 96);
+                if (!self->rail_flip_done_) {
+                    if (self->rail_side_ == "left" && dx > threshold) {
+                        self->flip_rail_side("right");
+                        self->rail_flip_done_ = true;
+                    } else if (self->rail_side_ == "right" && dx < -threshold) {
+                        self->flip_rail_side("left");
+                        self->rail_flip_done_ = true;
+                    }
+                }
+                return 0;
+            }
             int tab = self->tab_at(cl);
             bool close = false;
             if (tab >= 0) {
@@ -779,23 +798,28 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             int tool = self->tool_at(cl);
             const RECT& add = self->lay_.add_btn;
             bool add_hover = PtInRect(&add, cl) != FALSE;
+            bool grip_hover = self->lay_.zen
+                && PtInRect(&self->rail_grip_rect(), cl) != FALSE;
             if (tab != self->hover_tab_ || close != self->hover_close_
-                || tool != self->hover_tool_ || add_hover != self->hover_add_) {
+                || tool != self->hover_tool_ || add_hover != self->hover_add_
+                || grip_hover != self->hover_rail_grip_) {
                 self->hover_tab_ = tab;
                 self->hover_close_ = close;
                 self->hover_tool_ = tool;
                 self->hover_add_ = add_hover;
+                self->hover_rail_grip_ = grip_hover;
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
         }
         case WM_MOUSELEAVE:
             if (self->hover_tab_ != -1 || self->hover_close_ || self->hover_tool_ != -1
-                || self->hover_add_) {
+                || self->hover_add_ || self->hover_rail_grip_) {
                 self->hover_tab_ = -1;
                 self->hover_close_ = false;
                 self->hover_tool_ = -1;
                 self->hover_add_ = false;
+                self->hover_rail_grip_ = false;
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -880,6 +904,16 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 SetCapture(hwnd);
                 return 0;
             }
+            if (self->lay_.zen) {
+                RECT grip = self->rail_grip_rect();
+                if (PtInRect(&grip, cl)) {
+                    self->drag_rail_ = true;
+                    self->rail_flip_done_ = false;
+                    self->grab_pos_ = cl;
+                    SetCapture(hwnd);
+                    return 0;
+                }
+            }
             int tab = self->tab_at(cl);
             if (tab >= 0) {
                 RECT chip = self->tab_chip_rect(tab, self->tab_width_for(
@@ -942,6 +976,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             // the flags below before the commit code gets to read them.
             const bool had_split = self->drag_split_;
             const bool had_thumb = self->drag_thumb_;
+            const bool had_rail = self->drag_rail_;
             const int drag_from = self->drag_tab_;
             const bool drag_was_active = self->drag_active_;
             const bool drag_was_tear = self->drag_tear_;
@@ -952,6 +987,8 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             if (GetCapture() == hwnd) ReleaseCapture();
             self->drag_split_ = false;
             self->drag_thumb_ = false;
+            self->drag_rail_ = false;
+            self->rail_flip_done_ = false;
             self->drag_tab_ = -1;
             self->drag_active_ = false;
             self->drag_tear_ = false;
@@ -961,6 +998,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             self->press_tool_ = -1;
             if (had_split) return 0;
             if (had_thumb) return 0;
+            if (had_rail) return 0;
             if (drag_from >= 0) {
                 if (drag_was_active && drag_was_tear) {
                     self->hide_tear_hint();
@@ -1028,6 +1066,8 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             self->drop_slot_ = -1;
             self->drag_thumb_ = false;
             self->drag_split_ = false;
+            self->drag_rail_ = false;
+            self->rail_flip_done_ = false;
             self->hide_tear_hint();
             return 0;
         case WM_MBUTTONUP: {
@@ -1072,6 +1112,10 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 if (self->devtools_bar_hit(pt)) {
                     SetCursor(LoadCursorW(nullptr,
                         self->devtools_dock_ == DOCK_BOTTOM ? IDC_SIZENS : IDC_SIZEWE));
+                    return TRUE;
+                }
+                if (self->lay_.zen && PtInRect(&self->rail_grip_rect(), pt)) {
+                    SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
                     return TRUE;
                 }
             }
@@ -1535,6 +1579,32 @@ RECT CefShell::tab_thumb_rect() const {
     return {x, area.bottom - MulDiv(5, dpi, 96), x + len, area.bottom - MulDiv(1, dpi, 96)};
 }
 
+RECT CefShell::rail_grip_rect() const {
+    // Zen only: a narrow strip along the rail edge that faces the page host.
+    // Zen chips stop MulDiv(6, dpi) short of that edge, so the strip never
+    // sits under a tab; the scroll thumb overlaps it, and WM_LBUTTONDOWN
+    // checks the thumb first — scroll wins where both exist.
+    if (!lay_.zen) return {};
+    int g = MulDiv(6, lay_.dpi, 96);
+    if (g < 5) g = 5;
+    if (rail_side_ == "right") {
+        return {lay_.rail.left, lay_.rail.top, lay_.rail.left + g,
+                lay_.rail.bottom};
+    }
+    return {lay_.rail.right - g, lay_.rail.top, lay_.rail.right,
+            lay_.rail.bottom};
+}
+
+void CefShell::flip_rail_side(const std::string& side) {
+    if (rail_side_ == side) return;
+    rail_side_ = side;
+    Runtime* rt = runtime();
+    if (rt) kiwi::save_shell_rail_side(rt->config_dir, side);
+    sync_settings_rail_side();
+    layout();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 int CefShell::drop_slot_at(const POINT& cl) const {
     int n = static_cast<int>(tabs_.size());
     if (n < 2) return 0;
@@ -1914,6 +1984,7 @@ bool CefShell::chrome_is_drag_zone(const POINT& cl) const {
     if (tab_at(cl) >= 0) return false;
     RECT thumb = tab_thumb_rect();
     if (!IsRectEmpty(&thumb) && PtInRect(&thumb, cl)) return false;
+    if (lay_.zen && PtInRect(&rail_grip_rect(), cl)) return false;
     if (devtools_bar_hit(cl)) return false;
     if (PtInRect(&lay_.min_btn, cl) || PtInRect(&lay_.max_btn, cl)
         || PtInRect(&lay_.close_btn, cl)) {
@@ -1986,6 +2057,25 @@ void CefShell::draw_rail(HDC dc) {
                 lay_.rail.right, lay_.rail.bottom};
     }
     fill_rect_color(dc, line, pal.outline);
+    // Drag affordance: a small pill centered on the host-facing edge. It
+    // grabs the rail (SIZEWE cursor) and flips the rail side on a horizontal
+    // drag; it brightens into the accent while hovered or dragged.
+    RECT grip = rail_grip_rect();
+    if (IsRectEmpty(&grip)) return;
+    bool hot = hover_rail_grip_ || drag_rail_;
+    int pw = MulDiv(hot ? 4 : 3, lay_.dpi, 96);
+    int ph = MulDiv(hot ? 40 : 30, lay_.dpi, 96);
+    int cy = (lay_.rail.top + lay_.rail.bottom) / 2;
+    RECT pill;
+    if (rail_side_ == "right") {
+        pill = {grip.left + MulDiv(1, lay_.dpi, 96), cy - ph / 2,
+                grip.left + MulDiv(1, lay_.dpi, 96) + pw, cy + ph / 2};
+    } else {
+        pill = {grip.right - MulDiv(1, lay_.dpi, 96) - pw, cy - ph / 2,
+                grip.right - MulDiv(1, lay_.dpi, 96), cy + ph / 2};
+    }
+    fill_round_rect(dc, pill, 2, lay_.dpi,
+                    hot ? pal.omnibox_focus : pal.outline);
 }
 
 void CefShell::draw_devtools_split(HDC dc) {
