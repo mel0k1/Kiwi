@@ -38,10 +38,12 @@ add_library(kiwi SHARED
     src/cef/cef_runtime.cpp
     src/cef/win/cef_main_win.cpp
     src/cef/win/cef_shell_win.cpp
+    src/cef/win/clear_data_win.cpp
     src/cef/win/favicon_store.cpp
     src/cef/win/gfx_win.cpp
     src/cef/win/bookmarks_win.cpp
     src/cef/win/history_win.cpp
+    src/cef/win/search_engines_win.cpp
     src/cef/win/settings_win.cpp
     src/cef/win/site_rules_win.cpp
     src/cef/win/updater_win.cpp
@@ -80,7 +82,8 @@ target_link_libraries(kiwi PRIVATE
     libcef_dll_wrapper
     comctl32
     gdiplus
-    dwmapi)
+    dwmapi
+    uxtheme)
 
 SET_LIBRARY_TARGET_PROPERTIES("kiwi")
 add_dependencies(kiwi libcef_dll_wrapper)

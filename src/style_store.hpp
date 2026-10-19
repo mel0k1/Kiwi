@@ -18,8 +18,17 @@ void save_shell_style(const std::string& config_dir, const std::string& style);
 // True when the value is one of the accepted style names.
 bool is_valid_shell_style(const std::string& style);
 
-// Mica transparency toggle. Default follows the style: on for zen, off for
-// classic (the renderer falls back to opaque chrome pre-Windows 11 22H2).
+// Chrome backdrop behind the painted chrome: "off" (solid), "mica" or
+// "acrylic" (frosted glass). The renderer falls back to opaque chrome
+// pre-Windows 11 22H2 either way. Legacy files stored a bare true/false for
+// the same key (true maps to mica); the default follows the style: zen
+// starts with mica, classic stays solid.
+std::string load_shell_backdrop(const std::string& config_dir);
+void save_shell_backdrop(const std::string& config_dir, const std::string& backdrop);
+bool is_valid_shell_backdrop(const std::string& backdrop);
+
+// Boolean view over the backdrop ("off" or not); kept for callers that only
+// ask "is the chrome translucent".
 bool load_shell_transparency(const std::string& config_dir);
 void save_shell_transparency(const std::string& config_dir, bool enabled);
 

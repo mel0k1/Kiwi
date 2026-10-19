@@ -17,7 +17,17 @@ namespace gfx {
 // One-time GDI+ startup (never shut down; icons and favicons outlive callers).
 void init();
 
-// Neutral light chrome palette shared by every painted surface.
+// Chrome theming. Kiwi follows the Windows "app mode" (Settings >
+// Personalization > Colors): dark apps get the dark chrome palette, light
+// apps the neutral light one. The flag is read once at startup before the
+// first window opens and flipped through set_dark_chrome(); every palette()
+// call afterwards returns the matching set, and the DWM caption/backdrop
+// pick the tint up through the same flag.
+bool system_prefers_dark();
+void set_dark_chrome(bool dark);
+bool dark_chrome();
+
+// Neutral chrome palette shared by every painted surface.
 struct Palette {
     COLORREF chrome_bg;
     COLORREF chrome_text;
@@ -36,6 +46,25 @@ struct Palette {
 };
 
 const Palette& palette();
+
+// Colors for the classic Win32 dialogs (settings, history, bookmarks, the
+// per-site rules editor): surface for the window background, field_bg for
+// edit controls and list views. Derived from the same light/dark pair so the
+// dialogs never clash with the chrome.
+struct AuxTheme {
+    COLORREF surface;
+    COLORREF ink;
+    COLORREF muted;
+    COLORREF field_bg;
+    COLORREF outline;
+};
+
+const AuxTheme& aux_theme();
+
+// Cached solid brushes for the WM_CTLCOLOR* handlers (rebuilt by
+// set_dark_chrome; do not delete them).
+HBRUSH aux_surface_brush();
+HBRUSH aux_field_brush();
 
 enum class Glyph {
     Back,

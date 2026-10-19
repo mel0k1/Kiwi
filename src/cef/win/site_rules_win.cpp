@@ -1,6 +1,7 @@
 #include "site_rules_win.hpp"
 
 #include "../cef_runtime.hpp"
+#include "aux_theme_win.hpp"
 
 #include <commctrl.h>
 #include <windowsx.h>
@@ -307,29 +308,13 @@ LRESULT CALLBACK site_rules_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
         case WM_SIZE:
             if (ui) layout_dialog(*ui);
             return 0;
-        case WM_ERASEBKGND: {
-            HDC dc = reinterpret_cast<HDC>(wparam);
-            RECT rect;
-            GetClientRect(hwnd, &rect);
-            HBRUSH brush = CreateSolidBrush(RGB(255, 245, 240));
-            FillRect(dc, &rect, brush);
-            DeleteObject(brush);
+        case WM_ERASEBKGND:
             return 1;
-        }
-        case WM_CTLCOLOREDIT: {
-            HDC dc = reinterpret_cast<HDC>(wparam);
-            SetBkColor(dc, RGB(255, 255, 255));
-            SetTextColor(dc, RGB(44, 62, 80));
-            static HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
-            return reinterpret_cast<LRESULT>(white);
-        }
-        case WM_CTLCOLORSTATIC: {
-            HDC dc = reinterpret_cast<HDC>(wparam);
-            SetBkColor(dc, RGB(255, 245, 240));
-            SetTextColor(dc, RGB(133, 146, 158));
-            static HBRUSH surface = CreateSolidBrush(RGB(255, 245, 240));
-            return reinterpret_cast<LRESULT>(surface);
-        }
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+            return aux_field_ctlcolor(reinterpret_cast<HDC>(wparam));
+        case WM_CTLCOLORSTATIC:
+            return aux_muted_ctlcolor(reinterpret_cast<HDC>(wparam));
         case WM_NOTIFY: {
             auto* header = reinterpret_cast<NMHDR*>(lparam);
             if (header->idFrom == IDC_RULES_LIST && ui && !ui->suspended) {
@@ -416,7 +401,7 @@ void open_site_rules_dialog(HWND owner) {
     wc.lpfnWndProc = site_rules_proc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
-    wc.hbrBackground = CreateSolidBrush(RGB(255, 245, 240));
+    wc.hbrBackground = gfx::aux_surface_brush();
     wc.lpszClassName = kDialogClass;
     RegisterClassExW(&wc);
 
@@ -452,6 +437,7 @@ void open_site_rules_dialog(HWND owner) {
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_RULES_LIST)),
         GetModuleHandleW(nullptr), nullptr);
     init_list_columns(ui->list);
+    apply_list_theme(ui->list);
 
     auto make_label = [&ui](const wchar_t* text, DialogControl id) {
         return CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE,
@@ -519,6 +505,12 @@ void open_site_rules_dialog(HWND owner) {
           IDC_COOKIE_LABEL, IDC_FP_LABEL}) {
         SendMessageW(GetDlgItem(ui->window, id), WM_SETFONT,
             reinterpret_cast<WPARAM>(ui->font), TRUE);
+    }
+    apply_control_theme(ui->js_combo);
+    apply_control_theme(ui->cookie_combo);
+    apply_control_theme(ui->fp_combo);
+    for (DialogControl id : {IDC_SAVE_BTN, IDC_REMOVE_BTN, IDC_CLOSE_BTN}) {
+        apply_control_theme(GetDlgItem(ui->window, id));
     }
 
     repopulate(*ui);

@@ -17,6 +17,7 @@ namespace {
 
 ULONG_PTR g_token = 0;
 constexpr float kPi = 3.14159265f;
+bool g_dark_chrome = false;
 
 Gdiplus::Graphics* graphics_on(HDC dc) {
     Gdiplus::Graphics* g = new Gdiplus::Graphics(dc);
@@ -192,7 +193,7 @@ void init() {
 }
 
 const Palette& palette() {
-    static const Palette value = []() {
+    static const Palette light = []() {
         Palette p;
         p.chrome_bg = RGB(243, 243, 246);
         p.chrome_text = RGB(32, 33, 36);
@@ -210,7 +211,79 @@ const Palette& palette() {
         p.danger_hover = RGB(242, 139, 130);
         return p;
     }();
-    return value;
+    static const Palette dark = []() {
+        Palette p;
+        p.chrome_bg = RGB(32, 33, 36);
+        p.chrome_text = RGB(226, 228, 232);
+        p.chrome_muted = RGB(154, 160, 166);
+        p.active_tab_bg = RGB(54, 57, 63);
+        p.hover_chip = RGB(44, 47, 52);
+        p.pressed_chip = RGB(50, 54, 59);
+        p.outline = RGB(60, 64, 67);
+        p.omnibox_bg = RGB(42, 45, 49);
+        p.omnibox_border = RGB(68, 72, 77);
+        p.omnibox_focus = RGB(224, 128, 60);
+        p.accent = RGB(224, 128, 60);
+        p.separator = RGB(52, 55, 60);
+        p.content_bg = RGB(32, 33, 36);
+        p.danger_hover = RGB(197, 87, 77);
+        return p;
+    }();
+    return dark_chrome() ? dark : light;
+}
+
+bool dark_chrome() {
+    return g_dark_chrome;
+}
+
+void set_dark_chrome(bool dark) {
+    g_dark_chrome = dark;
+}
+
+bool system_prefers_dark() {
+    // HKCU\...\Themes\Personalize\AppsUseLightTheme: 0 = dark app mode.
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    LSTATUS status = RegGetValueW(HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &size);
+    return status == ERROR_SUCCESS && value == 0;
+}
+
+const AuxTheme& aux_theme() {
+    static const AuxTheme light = []() {
+        AuxTheme t;
+        t.surface = RGB(245, 246, 249);
+        t.ink = RGB(32, 33, 36);
+        t.muted = RGB(110, 116, 124);
+        t.field_bg = RGB(255, 255, 255);
+        t.outline = RGB(206, 209, 215);
+        return t;
+    }();
+    static const AuxTheme dark = []() {
+        AuxTheme t;
+        t.surface = RGB(26, 27, 30);
+        t.ink = RGB(226, 228, 232);
+        t.muted = RGB(154, 160, 166);
+        t.field_bg = RGB(36, 38, 41);
+        t.outline = RGB(60, 64, 67);
+        return t;
+    }();
+    return dark_chrome() ? dark : light;
+}
+
+HBRUSH aux_surface_brush() {
+    static HBRUSH light = CreateSolidBrush(aux_theme().surface);
+    static HBRUSH dark = nullptr;
+    if (!dark) dark = CreateSolidBrush(RGB(26, 27, 30));
+    return dark_chrome() ? dark : light;
+}
+
+HBRUSH aux_field_brush() {
+    static HBRUSH light = CreateSolidBrush(aux_theme().field_bg);
+    static HBRUSH dark = nullptr;
+    if (!dark) dark = CreateSolidBrush(RGB(36, 38, 41));
+    return dark_chrome() ? dark : light;
 }
 
 COLORREF blend(COLORREF base, COLORREF color, int alpha) {

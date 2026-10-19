@@ -1,6 +1,7 @@
 #include "history_win.hpp"
 
 #include "../cef_runtime.hpp"
+#include "aux_theme_win.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -20,7 +21,6 @@ namespace kiwi {
 namespace {
 
 constexpr wchar_t kClass[] = L"KiwiHistoryWindow";
-constexpr COLORREF kSurface = RGB(255, 245, 240);
 
 enum {
     ID_LIST = 5001,
@@ -116,6 +116,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (!st) return DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
+        case WM_CTLCOLORSTATIC:
+            return aux_static_ctlcolor(reinterpret_cast<HDC>(wparam));
         case WM_NOTIFY: {
             auto* nm = reinterpret_cast<NMHDR*>(lparam);
             if (nm->idFrom == ID_LIST && nm->code == NM_DBLCLK) {
@@ -168,7 +170,7 @@ void open_history_window(HWND owner,
         wc.lpfnWndProc = wnd_proc;
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
-        wc.hbrBackground = CreateSolidBrush(kSurface);
+        wc.hbrBackground = gfx::aux_surface_brush();
         wc.lpszClassName = kClass;
         RegisterClassW(&wc);
         registered = true;
@@ -205,6 +207,7 @@ void open_history_window(HWND owner,
         GetModuleHandleW(nullptr), nullptr);
     ListView_SetExtendedListViewStyle(st->list,
         LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+    apply_list_theme(st->list);
     LVCOLUMNW col = {};
     col.mask = LVCF_TEXT | LVCF_WIDTH;
     col.cx = 130;
@@ -234,6 +237,7 @@ void open_history_window(HWND owner,
     SendMessageW(st->list, WM_SETFONT, (WPARAM)font, TRUE);
     for (int id : {ID_OPEN, ID_CLEAR, ID_CLOSEWIN}) {
         SendMessageW(GetDlgItem(st->hwnd, id), WM_SETFONT, (WPARAM)font, TRUE);
+        apply_control_theme(GetDlgItem(st->hwnd, id));
     }
 
     reload_list(st);

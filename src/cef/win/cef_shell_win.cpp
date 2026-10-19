@@ -60,7 +60,11 @@ constexpr DWORD kDwmwaUseImmersiveDarkMode = 20;
 constexpr DWORD kDwmwaWindowCornerPreference = 33;
 constexpr DWORD kDwmwaSystemBackdropType = 38;
 constexpr DWORD kDwmcpRound = 2;
-constexpr DWORD kDwmsbtMica = 1;
+// DWM_SYSTEMBACKDROP_TYPE: 1 = none, 2 = Mica, 3 = Acrylic (frosted glass).
+// (0.16.0 stored 1 as "mica" — that value actually disabled the backdrop.)
+constexpr DWORD kDwmsbtNone = 1;
+constexpr DWORD kDwmsbtMica = 2;
+constexpr DWORD kDwmsbtAcrylic = 3;
 
 #ifndef HTCLOSE
 #define HTCLOSE 20
@@ -375,7 +379,7 @@ private:
     bool find_visible_ = false;
 
     std::string style_;
-    bool transparency_ = false;
+    std::string backdrop_;   // "off", "mica" or "acrylic" (style.toml)
     bool star_active_ = false;
     std::string status_text_;
 
@@ -471,14 +475,19 @@ void CefShell::store_geometry() {
 }
 
 bool CefShell::backdrop_active() const {
-    return transparency_ && dwm().ok() && windows_build() >= 22621;
+    return backdrop_ != "off" && dwm().ok() && windows_build() >= 22621;
 }
 
 void CefShell::apply_backdrop() {
     if (!dwm().ok() || !hwnd_) return;
     DWORD corner = kDwmcpRound;
     dwm().set_attr(hwnd_, kDwmwaWindowCornerPreference, &corner, sizeof(corner));
-    DWORD backdrop = backdrop_active() ? kDwmsbtMica : 0;
+    DWORD dark = gfx::dark_chrome() ? 1 : 0;
+    dwm().set_attr(hwnd_, kDwmwaUseImmersiveDarkMode, &dark, sizeof(dark));
+    DWORD backdrop = kDwmsbtNone;
+    if (backdrop_active()) {
+        backdrop = backdrop_ == "acrylic" ? kDwmsbtAcrylic : kDwmsbtMica;
+    }
     dwm().set_attr(hwnd_, kDwmwaSystemBackdropType, &backdrop, sizeof(backdrop));
     MARGINS margins = backdrop_active() ? MARGINS{-1, -1, -1, -1}
                                         : MARGINS{0, 0, 0, 0};
@@ -489,12 +498,13 @@ void CefShell::apply_backdrop() {
 void CefShell::reload_style() {
     Runtime* rt = runtime();
     style_ = kiwi::load_shell_style(rt ? rt->config_dir : std::string());
-    transparency_ = kiwi::load_shell_transparency(rt ? rt->config_dir : std::string());
+    backdrop_ = kiwi::load_shell_backdrop(rt ? rt->config_dir : std::string());
     apply_backdrop();
     layout();
 }
 
 bool CefShell::create_window() {
+    gfx::set_dark_chrome(gfx::system_prefers_dark());
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -532,7 +542,7 @@ bool CefShell::create_window() {
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
     style_ = kiwi::load_shell_style(rt ? rt->config_dir : std::string());
-    transparency_ = kiwi::load_shell_transparency(rt ? rt->config_dir : std::string());
+    backdrop_ = kiwi::load_shell_backdrop(rt ? rt->config_dir : std::string());
     std::string dock = kiwi::load_shell_devtools_dock(rt ? rt->config_dir : std::string());
     devtools_dock_ = dock == "left" ? DOCK_LEFT
                    : dock == "right" ? DOCK_RIGHT : DOCK_BOTTOM;
@@ -666,17 +676,23 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         }
         case WM_CTLCOLOREDIT: {
             HDC dc = reinterpret_cast<HDC>(wparam);
-            SetBkColor(dc, RGB(255, 255, 255));
-            SetTextColor(dc, RGB(32, 33, 36));
-            static HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
-            return reinterpret_cast<LRESULT>(white);
+            const gfx::Palette& pal = gfx::palette();
+            SetBkColor(dc, pal.omnibox_bg);
+            SetTextColor(dc, pal.chrome_text);
+            static HBRUSH light_omni = CreateSolidBrush(RGB(255, 255, 255));
+            static HBRUSH dark_omni = CreateSolidBrush(RGB(42, 45, 49));
+            return reinterpret_cast<LRESULT>(gfx::dark_chrome() ? dark_omni
+                                                                : light_omni);
         }
         case WM_CTLCOLORSTATIC: {
             HDC dc = reinterpret_cast<HDC>(wparam);
-            SetBkColor(dc, RGB(255, 255, 255));
-            SetTextColor(dc, RGB(32, 33, 36));
-            static HBRUSH white2 = CreateSolidBrush(RGB(255, 255, 255));
-            return reinterpret_cast<LRESULT>(white2);
+            const gfx::Palette& pal = gfx::palette();
+            SetBkColor(dc, pal.chrome_bg);
+            SetTextColor(dc, pal.chrome_text);
+            static HBRUSH light_chrome = CreateSolidBrush(RGB(243, 243, 246));
+            static HBRUSH dark_chrome_br = CreateSolidBrush(RGB(32, 33, 36));
+            return reinterpret_cast<LRESULT>(gfx::dark_chrome() ? dark_chrome_br
+                                                                : light_chrome);
         }
         case WM_COMMAND:
             self->on_command(wparam, lparam);
@@ -1928,9 +1944,16 @@ void CefShell::draw_add_button(HDC dc, const RECT& rect) {
 void CefShell::draw_rail(HDC dc) {
     if (!lay_.zen) return;
     const gfx::Palette& pal = gfx::palette();
+    if (!backdrop_active()) {
+        // A panel tone one step off the chrome so the rail reads as its own
+        // surface (with a backdrop the Mica/acrylic tint does this instead).
+        COLORREF tint = gfx::dark_chrome() ? RGB(27, 28, 31)
+                                           : RGB(237, 238, 242);
+        fill_rect_color(dc, lay_.rail, tint);
+    }
     RECT line = {lay_.rail.right - MulDiv(1, lay_.dpi, 96), lay_.rail.top,
                  lay_.rail.right, lay_.rail.bottom};
-    fill_rect_color(dc, line, pal.separator);
+    fill_rect_color(dc, line, pal.outline);
 }
 
 void CefShell::draw_devtools_split(HDC dc) {
@@ -1981,9 +2004,17 @@ void CefShell::draw_tab(HDC dc, int index, const RECT& chip) {
     bool selected = index == active_;
     bool hovered = hover_tab_ == index;
     if (selected) {
-        fill_round_rect(dc, chip, 8, dpi, pal.active_tab_bg);
+        if (lay_.zen) {
+            COLORREF wash = gfx::blend(pal.active_tab_bg, pal.accent, 22);
+            fill_round_rect(dc, chip, 10, dpi, wash);
+            stroke_round_rect(dc, chip, 10, dpi,
+                gfx::blend(pal.active_tab_bg, pal.accent, 110), 1.0f);
+        } else {
+            fill_round_rect(dc, chip, 8, dpi, pal.active_tab_bg);
+            stroke_round_rect(dc, chip, 8, dpi, pal.outline, 1.0f);
+        }
     } else if (hovered && press_close_tab_ != index) {
-        fill_round_rect(dc, chip, 8, dpi, pal.hover_chip);
+        fill_round_rect(dc, chip, lay_.zen ? 10 : 8, dpi, pal.hover_chip);
     }
 
     RECT close = tab_close_rect(chip);
