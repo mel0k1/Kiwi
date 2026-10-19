@@ -63,9 +63,9 @@ MUST_DEFINE = {
         (r"bool drag_rail_ = false;", 1),
         (r"bool rail_flip_done_ = false;", 1),
         (r"bool hover_rail_grip_ = false;", 1),
-        (r"if \(self->lay_\.zen && PtInRect\(&self->rail_grip_rect\(\), pt\)\) \{", 1),
+        (r"RECT grip = self->rail_grip_rect\(\);\n                if \(self->lay_\.zen && PtInRect\(&grip, pt\)\) \{", 1),
         (r"SetCursor\(LoadCursorW\(nullptr, IDC_SIZEWE\)\);\n                    return TRUE;", 1),
-        (r"if \(self->lay_\.zen\) \{\n                RECT grip = self->rail_grip_rect\(\);", 1),
+        (r"RECT grip = self->rail_grip_rect\(\);\n                if \(PtInRect\(&grip, cl\)\) \{\n                    self->drag_rail_ = true;", 1),
         (r"self->drag_rail_ = true;\n                    self->rail_flip_done_ = false;", 1),
         (r"if \(self->drag_rail_\) \{", 1),
         (r"self->flip_rail_side\(\"right\"\);", 1),
@@ -73,7 +73,8 @@ MUST_DEFINE = {
         (r"const bool had_rail = self->drag_rail_;", 1),
         (r"if \(had_rail\) return 0;", 1),
         (r"self->drag_rail_ = false;\n            self->rail_flip_done_ = false;", 2),
-        (r"if \(lay_\.zen && PtInRect\(&rail_grip_rect\(\), cl\)\) return false;", 1),
+        (r"RECT grip = rail_grip_rect\(\);\n    if \(PtInRect\(&grip, cl\)\) return false;", 1),
+        (r"grip_hover = PtInRect\(&grip, cl\) != FALSE;", 1),
         (r"bool hot = hover_rail_grip_ \|\| drag_rail_;", 1),
         (r"hot \? pal\.omnibox_focus : pal\.outline\);", 1),
         (r"kiwi::save_shell_rail_side\(rt->config_dir, side\);", 1),
@@ -94,7 +95,10 @@ FORBIDDEN = [
      [r"constexpr int kThemeChipCount = 7;"]),
     # the drag gesture must persist through the store validator, not write raw
     ("src/cef/win/cef_shell_win.cpp",
-     [r"save_shell_rail_side\(rt->config_dir, rail_side_\);"]),
+     [r"save_shell_rail_side\(rt->config_dir, rail_side_\);",
+      # MSVC C2102: '&' on the RECT returned by value — bind a named local first
+      r"PtInRect\(&self->rail_grip_rect\(\)",
+      r"PtInRect\(&rail_grip_rect\(\)"]),
 ]
 
 

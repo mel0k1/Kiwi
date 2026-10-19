@@ -798,8 +798,11 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             int tool = self->tool_at(cl);
             const RECT& add = self->lay_.add_btn;
             bool add_hover = PtInRect(&add, cl) != FALSE;
-            bool grip_hover = self->lay_.zen
-                && PtInRect(&self->rail_grip_rect(), cl) != FALSE;
+            bool grip_hover = false;
+            if (self->lay_.zen) {
+                RECT grip = self->rail_grip_rect();
+                grip_hover = PtInRect(&grip, cl) != FALSE;
+            }
             if (tab != self->hover_tab_ || close != self->hover_close_
                 || tool != self->hover_tool_ || add_hover != self->hover_add_
                 || grip_hover != self->hover_rail_grip_) {
@@ -1114,7 +1117,8 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                         self->devtools_dock_ == DOCK_BOTTOM ? IDC_SIZENS : IDC_SIZEWE));
                     return TRUE;
                 }
-                if (self->lay_.zen && PtInRect(&self->rail_grip_rect(), pt)) {
+                RECT grip = self->rail_grip_rect();
+                if (self->lay_.zen && PtInRect(&grip, pt)) {
                     SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
                     return TRUE;
                 }
@@ -1984,7 +1988,8 @@ bool CefShell::chrome_is_drag_zone(const POINT& cl) const {
     if (tab_at(cl) >= 0) return false;
     RECT thumb = tab_thumb_rect();
     if (!IsRectEmpty(&thumb) && PtInRect(&thumb, cl)) return false;
-    if (lay_.zen && PtInRect(&rail_grip_rect(), cl)) return false;
+    RECT grip = rail_grip_rect();
+    if (PtInRect(&grip, cl)) return false;
     if (devtools_bar_hit(cl)) return false;
     if (PtInRect(&lay_.min_btn, cl) || PtInRect(&lay_.max_btn, cl)
         || PtInRect(&lay_.close_btn, cl)) {
