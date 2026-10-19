@@ -37,4 +37,22 @@ std::string load_shell_devtools_dock(const std::string& config_dir);
 void save_shell_devtools_dock(const std::string& config_dir, const std::string& dock);
 bool is_valid_shell_devtools_dock(const std::string& dock);
 
+// Chrome color theme: "auto" (follow the Windows app mode, default), "light",
+// "dark" or one of the ready-made palettes ("nord", "dracula", "catppuccin",
+// "solarized"). Unknown values fall back to "auto".
+std::string load_shell_theme(const std::string& config_dir);
+void save_shell_theme(const std::string& config_dir, const std::string& theme);
+bool is_valid_shell_theme(const std::string& theme);
+
+// Accent color override over the theme palette: "" (theme default) or a
+// "#RRGGBB" hex string. Anything else is rejected on save and reads as "".
+std::string load_shell_accent(const std::string& config_dir);
+void save_shell_accent(const std::string& config_dir, const std::string& accent);
+bool is_valid_shell_accent(const std::string& accent);
+
+// Side of the Zen tab rail: "left" (default) or "right".
+std::string load_shell_rail_side(const std::string& config_dir);
+void save_shell_rail_side(const std::string& config_dir, const std::string& side);
+bool is_valid_shell_rail_side(const std::string& side);
+
 }

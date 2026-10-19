@@ -99,4 +99,8 @@ if(KIWI_BUILD_TESTS)
     target_include_directories(kiwi_start_page_tests PRIVATE src)
     target_link_libraries(kiwi_start_page_tests PRIVATE mustela_core)
     add_test(NAME kiwi_start_page_tests COMMAND kiwi_start_page_tests)
+
+    add_executable(kiwi_style_store_tests src/tests/test_style_store.cpp src/style_store.cpp)
+    target_include_directories(kiwi_style_store_tests PRIVATE src)
+    add_test(NAME kiwi_style_store_tests COMMAND kiwi_style_store_tests)
 endif()

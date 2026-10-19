@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(kiwi
-    VERSION 0.19.0
+    VERSION 0.20.0
     DESCRIPTION "Privacy-first web browser"
     LANGUAGES C CXX)
 
@@ -136,6 +136,10 @@ if(KIWI_BUILD_TESTS)
     target_link_directories(kiwi_start_page_tests PRIVATE ${GTK_LIBRARY_DIRS} ${SOUP_LIBRARY_DIRS})
     target_link_libraries(kiwi_start_page_tests PRIVATE ${GTK_LIBRARIES} ${SOUP_LIBRARIES})
     add_test(NAME kiwi_start_page_tests COMMAND kiwi_start_page_tests)
+
+    add_executable(kiwi_style_store_tests src/tests/test_style_store.cpp src/style_store.cpp)
+    target_include_directories(kiwi_style_store_tests PRIVATE src)
+    add_test(NAME kiwi_style_store_tests COMMAND kiwi_style_store_tests)
 endif()
 
 include(GNUInstallDirs)

@@ -32,16 +32,41 @@ bool is_comment(const std::string& line) {
 // Single writer for style.toml: every save_* rewrites the whole file with the
 // current values of the other keys so they never drop each other.
 void write_style_file(const std::string& config_dir, const std::string& style,
-                      const std::string& backdrop, const std::string& dock) {
+                      const std::string& backdrop, const std::string& dock,
+                      const std::string& theme, const std::string& accent,
+                      const std::string& rail_side) {
     FILE* out = std::fopen((config_dir + "/style.toml").c_str(), "wb");
     if (!out) return;
     std::fprintf(out, "# Kiwi shell style: classic or zen\nstyle = \"%s\"\n"
         "# Chrome backdrop: off, mica or acrylic (frosted glass; Windows 11 22H2+)\n"
         "transparency = \"%s\"\n"
         "# Docked devtools edge: bottom, left or right\n"
-        "devtools_dock = \"%s\"\n",
-        style.c_str(), backdrop.c_str(), dock.c_str());
+        "devtools_dock = \"%s\"\n"
+        "# Chrome color theme: auto, light, dark, nord, dracula, catppuccin or solarized\n"
+        "theme = \"%s\"\n"
+        "# Accent override over the theme palette: empty for the theme default or #RRGGBB\n"
+        "accent = \"%s\"\n"
+        "# Side of the zen tab rail: left or right\n"
+        "rail_side = \"%s\"\n",
+        style.c_str(), backdrop.c_str(), dock.c_str(), theme.c_str(),
+        accent.c_str(), rail_side.c_str());
     std::fclose(out);
+}
+
+// Reads the first non-comment occurrence of |key| from style.toml; "" when
+// the file or the key is missing. Shared by every load_* of this store.
+std::string read_key(const std::string& config_dir, const std::string& key) {
+    if (config_dir.empty()) return std::string();
+    std::ifstream in(config_dir + "/style.toml");
+    if (!in) return std::string();
+    std::string line;
+    while (std::getline(in, line)) {
+        if (is_comment(line)) continue;
+        std::string value = string_key(line, key);
+        if (value.empty()) continue;
+        return value;
+    }
+    return std::string();
 }
 
 }  // namespace
@@ -67,7 +92,8 @@ std::string load_shell_style(const std::string& config_dir) {
 void save_shell_style(const std::string& config_dir, const std::string& style) {
     if (config_dir.empty() || !is_valid_shell_style(style)) return;
     write_style_file(config_dir, style, load_shell_backdrop(config_dir),
-        load_shell_devtools_dock(config_dir));
+        load_shell_devtools_dock(config_dir), load_shell_theme(config_dir),
+        load_shell_accent(config_dir), load_shell_rail_side(config_dir));
 }
 
 bool is_valid_shell_backdrop(const std::string& backdrop) {
@@ -99,7 +125,8 @@ std::string load_shell_backdrop(const std::string& config_dir) {
 void save_shell_backdrop(const std::string& config_dir, const std::string& backdrop) {
     if (config_dir.empty() || !is_valid_shell_backdrop(backdrop)) return;
     write_style_file(config_dir, load_shell_style(config_dir), backdrop,
-        load_shell_devtools_dock(config_dir));
+        load_shell_devtools_dock(config_dir), load_shell_theme(config_dir),
+        load_shell_accent(config_dir), load_shell_rail_side(config_dir));
 }
 
 bool load_shell_transparency(const std::string& config_dir) {
@@ -131,7 +158,68 @@ std::string load_shell_devtools_dock(const std::string& config_dir) {
 void save_shell_devtools_dock(const std::string& config_dir, const std::string& dock) {
     if (config_dir.empty() || !is_valid_shell_devtools_dock(dock)) return;
     write_style_file(config_dir, load_shell_style(config_dir),
-        load_shell_backdrop(config_dir), dock);
+        load_shell_backdrop(config_dir), dock, load_shell_theme(config_dir),
+        load_shell_accent(config_dir), load_shell_rail_side(config_dir));
+}
+
+bool is_valid_shell_theme(const std::string& theme) {
+    return theme == "auto" || theme == "light" || theme == "dark"
+        || theme == "nord" || theme == "dracula" || theme == "catppuccin"
+        || theme == "solarized";
+}
+
+std::string load_shell_theme(const std::string& config_dir) {
+    std::string value = read_key(config_dir, "theme");
+    if (value.empty()) return "auto";
+    return is_valid_shell_theme(value) ? value : "auto";
+}
+
+void save_shell_theme(const std::string& config_dir, const std::string& theme) {
+    if (config_dir.empty() || !is_valid_shell_theme(theme)) return;
+    write_style_file(config_dir, load_shell_style(config_dir),
+        load_shell_backdrop(config_dir), load_shell_devtools_dock(config_dir),
+        theme, load_shell_accent(config_dir), load_shell_rail_side(config_dir));
+}
+
+bool is_valid_shell_accent(const std::string& accent) {
+    if (accent.empty()) return true;
+    if (accent.size() != 7 || accent[0] != '#') return false;
+    for (size_t i = 1; i < accent.size(); ++i) {
+        char c = accent[i];
+        bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+                || (c >= 'A' && c <= 'F');
+        if (!hex) return false;
+    }
+    return true;
+}
+
+std::string load_shell_accent(const std::string& config_dir) {
+    std::string value = read_key(config_dir, "accent");
+    return is_valid_shell_accent(value) ? value : std::string();
+}
+
+void save_shell_accent(const std::string& config_dir, const std::string& accent) {
+    if (config_dir.empty() || !is_valid_shell_accent(accent)) return;
+    write_style_file(config_dir, load_shell_style(config_dir),
+        load_shell_backdrop(config_dir), load_shell_devtools_dock(config_dir),
+        load_shell_theme(config_dir), accent, load_shell_rail_side(config_dir));
+}
+
+bool is_valid_shell_rail_side(const std::string& side) {
+    return side == "left" || side == "right";
+}
+
+std::string load_shell_rail_side(const std::string& config_dir) {
+    std::string value = read_key(config_dir, "rail_side");
+    if (value.empty()) return "left";
+    return is_valid_shell_rail_side(value) ? value : "left";
+}
+
+void save_shell_rail_side(const std::string& config_dir, const std::string& side) {
+    if (config_dir.empty() || !is_valid_shell_rail_side(side)) return;
+    write_style_file(config_dir, load_shell_style(config_dir),
+        load_shell_backdrop(config_dir), load_shell_devtools_dock(config_dir),
+        load_shell_theme(config_dir), load_shell_accent(config_dir), side);
 }
 
 }

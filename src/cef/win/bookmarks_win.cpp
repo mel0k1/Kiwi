@@ -160,6 +160,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     if (!st) return DefWindowProcW(hwnd, msg, wparam, lparam);
 
     switch (msg) {
+        case WM_ERASEBKGND:
+            return aux_erasebkgnd(hwnd, wparam);
         case WM_CTLCOLOREDIT:
             return aux_field_ctlcolor(reinterpret_cast<HDC>(wparam));
         case WM_CTLCOLORSTATIC:
@@ -235,7 +237,7 @@ void open_bookmarks_manager(HWND owner,
         wc.lpfnWndProc = wnd_proc;
         wc.hInstance = GetModuleHandleW(nullptr);
         wc.hCursor = LoadCursorW(nullptr, reinterpret_cast<LPCWSTR>(IDC_ARROW));
-        wc.hbrBackground = gfx::aux_surface_brush();
+        wc.hbrBackground = nullptr;  // WM_ERASEBKGND paints the live theme
         wc.lpszClassName = kClass;
         RegisterClassW(&wc);
         registered = true;

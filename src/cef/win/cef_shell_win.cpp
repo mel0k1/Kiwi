@@ -380,6 +380,7 @@ private:
 
     std::string style_;
     std::string backdrop_;   // "off", "mica" or "acrylic" (style.toml)
+    std::string rail_side_;  // "left" or "right" (style.toml)
     bool star_active_ = false;
     std::string status_text_;
 
@@ -499,12 +500,15 @@ void CefShell::reload_style() {
     Runtime* rt = runtime();
     style_ = kiwi::load_shell_style(rt ? rt->config_dir : std::string());
     backdrop_ = kiwi::load_shell_backdrop(rt ? rt->config_dir : std::string());
+    rail_side_ = kiwi::load_shell_rail_side(rt ? rt->config_dir : std::string());
+    gfx::apply_named_theme(
+        kiwi::load_shell_theme(rt ? rt->config_dir : std::string()),
+        kiwi::load_shell_accent(rt ? rt->config_dir : std::string()));
     apply_backdrop();
     layout();
 }
 
 bool CefShell::create_window() {
-    gfx::set_dark_chrome(gfx::system_prefers_dark());
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.style = CS_HREDRAW | CS_VREDRAW;
@@ -523,6 +527,11 @@ bool CefShell::create_window() {
     }
 
     Runtime* rt = runtime();
+    // The named chrome theme (style.toml) decides light/dark before the first
+    // window exists, so the DWM caption and the first paint agree.
+    gfx::apply_named_theme(
+        kiwi::load_shell_theme(rt ? rt->config_dir : std::string()),
+        kiwi::load_shell_accent(rt ? rt->config_dir : std::string()));
     int width = rt ? rt->settings.window_width : 1280;
     int height = rt ? rt->settings.window_height : 800;
 
@@ -543,6 +552,7 @@ bool CefShell::create_window() {
 
     style_ = kiwi::load_shell_style(rt ? rt->config_dir : std::string());
     backdrop_ = kiwi::load_shell_backdrop(rt ? rt->config_dir : std::string());
+    rail_side_ = kiwi::load_shell_rail_side(rt ? rt->config_dir : std::string());
     std::string dock = kiwi::load_shell_devtools_dock(rt ? rt->config_dir : std::string());
     devtools_dock_ = dock == "left" ? DOCK_LEFT
                    : dock == "right" ? DOCK_RIGHT : DOCK_BOTTOM;
@@ -1247,13 +1257,21 @@ void CefShell::layout() {
                              (top_h + omni_h) / 2};
         int rail_w = MulDiv(230, dpi, 96);
         if (rail_w > w / 2) rail_w = w / 2;
-        lay_.rail = {0, top, rail_w, h - status_h};
+        bool rail_right = rail_side_ == "right";
+        if (rail_right) {
+            lay_.rail = {w - rail_w, top, w, h - status_h};
+        } else {
+            lay_.rail = {0, top, rail_w, h - status_h};
+        }
         int add = MulDiv(34, dpi, 96);
-        lay_.add_btn = {MulDiv(8, dpi, 96), top + MulDiv(6, dpi, 96),
-                        MulDiv(8, dpi, 96) + add, top + MulDiv(6, dpi, 96) + add};
-        lay_.tab_area = {0, lay_.add_btn.bottom + MulDiv(2, dpi, 96), rail_w,
-                         h - status_h};
-        lay_.host = {rail_w, top, w, h - status_h};
+        int add_left = lay_.rail.left + MulDiv(8, dpi, 96);
+        lay_.add_btn = {add_left, top + MulDiv(6, dpi, 96), add_left + add,
+                        top + MulDiv(6, dpi, 96) + add};
+        lay_.tab_area = {lay_.rail.left, lay_.add_btn.bottom + MulDiv(2, dpi, 96),
+                         lay_.rail.right, h - status_h};
+        int host_left = rail_right ? 0 : rail_w;
+        int host_right = rail_right ? w - rail_w : w;
+        lay_.host = {host_left, top, host_right, h - status_h};
     } else {
         lay_.tab_area = {pad, 0, w - cap_zone - MulDiv(4, dpi, 96), top_h};
         int x = pad;
@@ -1497,6 +1515,12 @@ RECT CefShell::tab_thumb_rect() const {
         if (len < min_len) len = min_len;
         if (len > track) len = track;
         int y = area.top + MulDiv(tab_scroll_, track - len, maxs);
+        // The thumb hugs the host-facing edge (left edge when the rail sits
+        // on the right side of the window).
+        if (rail_side_ == "right") {
+            int left = area.left + MulDiv(2, dpi, 96);
+            return {left, y, left + MulDiv(4, dpi, 96), y + len};
+        }
         int right = area.right - MulDiv(2, dpi, 96);
         return {right - MulDiv(4, dpi, 96), y, right, y + len};
     }
@@ -1813,8 +1837,9 @@ RECT CefShell::add_btn_rect() const {
     int size = MulDiv(28, dpi, 96);
     if (lay_.zen) {
         int add = MulDiv(34, dpi, 96);
-        return {MulDiv(8, dpi, 96), lay_.rail.top + MulDiv(6, dpi, 96),
-                MulDiv(8, dpi, 96) + add, lay_.rail.top + MulDiv(6, dpi, 96) + add};
+        int left = lay_.rail.left + MulDiv(8, dpi, 96);
+        return {left, lay_.rail.top + MulDiv(6, dpi, 96), left + add,
+                lay_.rail.top + MulDiv(6, dpi, 96) + add};
     }
     if (max_tab_scroll() > 0) {
         int left = lay_.tab_area.right - size - MulDiv(2, dpi, 96);
@@ -1947,12 +1972,19 @@ void CefShell::draw_rail(HDC dc) {
     if (!backdrop_active()) {
         // A panel tone one step off the chrome so the rail reads as its own
         // surface (with a backdrop the Mica/acrylic tint does this instead).
-        COLORREF tint = gfx::dark_chrome() ? RGB(27, 28, 31)
-                                           : RGB(237, 238, 242);
+        COLORREF tint = gfx::blend(pal.chrome_bg, RGB(0, 0, 0),
+                                   gfx::dark_chrome() ? 16 : 4);
         fill_rect_color(dc, lay_.rail, tint);
     }
-    RECT line = {lay_.rail.right - MulDiv(1, lay_.dpi, 96), lay_.rail.top,
-                 lay_.rail.right, lay_.rail.bottom};
+    // Hairline on the edge that faces the page host.
+    RECT line;
+    if (rail_side_ == "right") {
+        line = {lay_.rail.left, lay_.rail.top,
+                lay_.rail.left + MulDiv(1, lay_.dpi, 96), lay_.rail.bottom};
+    } else {
+        line = {lay_.rail.right - MulDiv(1, lay_.dpi, 96), lay_.rail.top,
+                lay_.rail.right, lay_.rail.bottom};
+    }
     fill_rect_color(dc, line, pal.outline);
 }
 
@@ -2741,8 +2773,12 @@ void CefShell::on_hotkey(Hotkey key) {
             });
             break;
         case HK_SETTINGS:
-            open_settings_window(hwnd_, [this]() {
-                reload_style();
+            open_settings_window(hwnd_, []() {
+                // Theme, style, backdrop and rail side concern every shell
+                // window (tear-off made the registry multi-window).
+                for (CefShell* window : shell_windows()) {
+                    window->reload_style();
+                }
             });
             break;
         case HK_BACK: {

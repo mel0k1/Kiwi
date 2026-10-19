@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace kiwi {
 namespace gfx {
@@ -26,6 +27,25 @@ void init();
 bool system_prefers_dark();
 void set_dark_chrome(bool dark);
 bool dark_chrome();
+
+// Ready-made chrome themes (the value of style.toml `theme`). "auto" follows
+// the Windows app mode with the built-in neutral pair; "light"/"dark" pin one
+// of the built-ins; the rest are named palettes with a fixed character.
+const std::vector<std::string>& theme_names();
+bool is_known_theme(const std::string& name);
+
+// Applies the named theme (+ optional "#RRGGBB" accent override; empty keeps
+// the theme accent): refills both palette slots and the aux dialog theme,
+// flips the dark-chrome flag ("auto" resolves against the app mode, named
+// themes carry their own character) and rebuilds the cached WM_CTLCOLOR
+// brushes. Call once at startup and again whenever style.toml changes.
+void apply_named_theme(const std::string& name, const std::string& accent_hex);
+
+// Preview colors for a theme chip in the settings UI: chrome background,
+// chrome text and accent as the theme would render them right now ("auto"
+// resolves against the current app mode). Returns false for unknown names.
+bool theme_preview(const std::string& name, COLORREF* bg, COLORREF* text,
+                   COLORREF* accent);
 
 // Neutral chrome palette shared by every painted surface.
 struct Palette {
@@ -82,7 +102,11 @@ enum class Glyph {
     CaptionClose,
     Incognito,
     Globe,
-    Spinner
+    Spinner,
+    Palette,
+    Shield,
+    Database,
+    Home
 };
 
 // Anti-aliased vector glyph centered in |rect| on a 16x16 design grid.

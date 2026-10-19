@@ -19,6 +19,195 @@ ULONG_PTR g_token = 0;
 constexpr float kPi = 3.14159265f;
 bool g_dark_chrome = false;
 
+// Theme slots (refilled in place by apply_named_theme) and the cached
+// WM_CTLCOLOR brushes built from the aux slots.
+Palette g_pal_light;
+Palette g_pal_dark;
+AuxTheme g_aux_light;
+AuxTheme g_aux_dark;
+HBRUSH g_surface_brush_light = nullptr;
+HBRUSH g_surface_brush_dark = nullptr;
+HBRUSH g_field_brush_light = nullptr;
+HBRUSH g_field_brush_dark = nullptr;
+
+Palette builtin_light_palette() {
+    Palette p;
+    p.chrome_bg = RGB(243, 243, 246);
+    p.chrome_text = RGB(32, 33, 36);
+    p.chrome_muted = RGB(110, 116, 124);
+    p.active_tab_bg = RGB(255, 255, 255);
+    p.hover_chip = RGB(231, 232, 237);
+    p.pressed_chip = RGB(222, 223, 229);
+    p.outline = RGB(214, 216, 221);
+    p.omnibox_bg = RGB(255, 255, 255);
+    p.omnibox_border = RGB(206, 209, 215);
+    p.omnibox_focus = RGB(224, 128, 60);
+    p.accent = RGB(224, 128, 60);
+    p.separator = RGB(220, 222, 227);
+    p.content_bg = RGB(255, 255, 255);
+    p.danger_hover = RGB(242, 139, 130);
+    return p;
+}
+
+Palette builtin_dark_palette() {
+    Palette p;
+    p.chrome_bg = RGB(32, 33, 36);
+    p.chrome_text = RGB(226, 228, 232);
+    p.chrome_muted = RGB(154, 160, 166);
+    p.active_tab_bg = RGB(54, 57, 63);
+    p.hover_chip = RGB(44, 47, 52);
+    p.pressed_chip = RGB(50, 54, 59);
+    p.outline = RGB(60, 64, 67);
+    p.omnibox_bg = RGB(42, 45, 49);
+    p.omnibox_border = RGB(68, 72, 77);
+    p.omnibox_focus = RGB(224, 128, 60);
+    p.accent = RGB(224, 128, 60);
+    p.separator = RGB(52, 55, 60);
+    p.content_bg = RGB(32, 33, 36);
+    p.danger_hover = RGB(197, 87, 77);
+    return p;
+}
+
+AuxTheme builtin_light_aux() {
+    AuxTheme t;
+    t.surface = RGB(245, 246, 249);
+    t.ink = RGB(32, 33, 36);
+    t.muted = RGB(110, 116, 124);
+    t.field_bg = RGB(255, 255, 255);
+    t.outline = RGB(206, 209, 215);
+    return t;
+}
+
+AuxTheme builtin_dark_aux() {
+    AuxTheme t;
+    t.surface = RGB(26, 27, 30);
+    t.ink = RGB(226, 228, 232);
+    t.muted = RGB(154, 160, 166);
+    t.field_bg = RGB(36, 38, 41);
+    t.outline = RGB(60, 64, 67);
+    return t;
+}
+
+// A ready-made theme: one chrome palette + the matching dialog theme. The
+// palette fills BOTH slots while the theme is active (palette() picks by the
+// dark flag, which the theme also carries).
+struct ThemeSpec {
+    const char* name;
+    bool dark;
+    Palette palette;
+    AuxTheme aux;
+};
+
+const std::vector<ThemeSpec>& theme_table() {
+    static const std::vector<ThemeSpec> table = []() {
+        std::vector<ThemeSpec> t;
+        {
+            Palette p; AuxTheme a;
+            // Nord (Polar Night / Snow Storm, frost accent)
+            p.chrome_bg = RGB(46, 52, 64);       p.chrome_text = RGB(236, 239, 244);
+            p.chrome_muted = RGB(167, 177, 194); p.active_tab_bg = RGB(59, 66, 82);
+            p.hover_chip = RGB(53, 60, 72);      p.pressed_chip = RGB(62, 70, 84);
+            p.outline = RGB(67, 76, 94);         p.omnibox_bg = RGB(51, 58, 70);
+            p.omnibox_border = RGB(76, 85, 104); p.omnibox_focus = RGB(136, 192, 208);
+            p.accent = RGB(136, 192, 208);       p.separator = RGB(58, 66, 80);
+            p.content_bg = RGB(46, 52, 64);      p.danger_hover = RGB(191, 97, 106);
+            a.surface = RGB(41, 46, 56);         a.ink = RGB(236, 239, 244);
+            a.muted = RGB(167, 177, 194);        a.field_bg = RGB(53, 60, 72);
+            a.outline = RGB(67, 76, 94);
+            t.push_back({"nord", true, p, a});
+        }
+        {
+            Palette p; AuxTheme a;
+            // Dracula (dark purple, pink/purple accents)
+            p.chrome_bg = RGB(40, 42, 54);       p.chrome_text = RGB(248, 248, 242);
+            p.chrome_muted = RGB(157, 162, 196); p.active_tab_bg = RGB(52, 55, 70);
+            p.hover_chip = RGB(47, 49, 64);      p.pressed_chip = RGB(56, 59, 76);
+            p.outline = RGB(68, 71, 90);         p.omnibox_bg = RGB(46, 48, 62);
+            p.omnibox_border = RGB(74, 77, 98);  p.omnibox_focus = RGB(189, 147, 249);
+            p.accent = RGB(189, 147, 249);       p.separator = RGB(58, 61, 78);
+            p.content_bg = RGB(40, 42, 54);      p.danger_hover = RGB(255, 85, 85);
+            a.surface = RGB(35, 37, 48);         a.ink = RGB(248, 248, 242);
+            a.muted = RGB(157, 162, 196);        a.field_bg = RGB(52, 55, 70);
+            a.outline = RGB(68, 71, 90);
+            t.push_back({"dracula", true, p, a});
+        }
+        {
+            Palette p; AuxTheme a;
+            // Catppuccin Mocha (soft dark, blue accent)
+            p.chrome_bg = RGB(30, 30, 46);       p.chrome_text = RGB(205, 214, 244);
+            p.chrome_muted = RGB(147, 153, 178); p.active_tab_bg = RGB(49, 50, 68);
+            p.hover_chip = RGB(42, 43, 60);      p.pressed_chip = RGB(52, 53, 74);
+            p.outline = RGB(69, 71, 90);         p.omnibox_bg = RGB(38, 38, 55);
+            p.omnibox_border = RGB(78, 80, 100); p.omnibox_focus = RGB(137, 180, 250);
+            p.accent = RGB(137, 180, 250);       p.separator = RGB(49, 50, 68);
+            p.content_bg = RGB(30, 30, 46);      p.danger_hover = RGB(243, 139, 168);
+            a.surface = RGB(24, 24, 37);         a.ink = RGB(205, 214, 244);
+            a.muted = RGB(147, 153, 178);        a.field_bg = RGB(49, 50, 68);
+            a.outline = RGB(69, 71, 90);
+            t.push_back({"catppuccin", true, p, a});
+        }
+        {
+            Palette p; AuxTheme a;
+            // Solarized Light (warm paper, blue accent)
+            p.chrome_bg = RGB(253, 246, 227);    p.chrome_text = RGB(7, 54, 66);
+            p.chrome_muted = RGB(147, 161, 161); p.active_tab_bg = RGB(238, 232, 213);
+            p.hover_chip = RGB(234, 227, 206);   p.pressed_chip = RGB(226, 218, 192);
+            p.outline = RGB(221, 214, 195);      p.omnibox_bg = RGB(255, 254, 246);
+            p.omnibox_border = RGB(213, 205, 184); p.omnibox_focus = RGB(38, 139, 210);
+            p.accent = RGB(38, 139, 210);        p.separator = RGB(228, 220, 198);
+            p.content_bg = RGB(253, 246, 227);   p.danger_hover = RGB(220, 50, 47);
+            a.surface = RGB(245, 239, 220);      a.ink = RGB(7, 54, 66);
+            a.muted = RGB(147, 161, 161);        a.field_bg = RGB(255, 254, 246);
+            a.outline = RGB(213, 205, 184);
+            t.push_back({"solarized", false, p, a});
+        }
+        return t;
+    }();
+    return table;
+}
+
+const ThemeSpec* find_theme(const std::string& name) {
+    for (const ThemeSpec& spec : theme_table()) {
+        if (name == spec.name) return &spec;
+    }
+    return nullptr;
+}
+
+// "#RRGGBB" -> COLORREF; CLR_INVALID when the string is not valid hex.
+COLORREF parse_hex_color(const std::string& hex) {
+    if (hex.size() != 7 || hex[0] != '#') return CLR_INVALID;
+    auto digit = [&](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    int hi[3] = {digit(hex[1]), digit(hex[3]), digit(hex[5])};
+    int lo[3] = {digit(hex[2]), digit(hex[4]), digit(hex[6])};
+    for (int i = 0; i < 3; ++i) {
+        if (hi[i] < 0 || lo[i] < 0) return CLR_INVALID;
+    }
+    return RGB(hi[0] * 16 + lo[0], hi[1] * 16 + lo[1], hi[2] * 16 + lo[2]);
+}
+
+void refresh_aux_brushes() {
+    // Fresh brushes each time. The previous brushes are orphaned, not
+    // deleted: window-class backgrounds (registered with the brush that
+    // existed at registration time) and in-flight WM_CTLCOLOR replies may
+    // still reference them, and deleting a brush under such a reference is
+    // undefined behavior. Orphaned solid brushes cost a few GDI bytes each
+    // and theme changes are rare user actions, so the bounded leak is the
+    // safe side of the trade.
+    auto replace = [](HBRUSH& brush, COLORREF color) {
+        HBRUSH fresh = CreateSolidBrush(color);
+        brush = fresh;
+    };
+    replace(g_surface_brush_light, g_aux_light.surface);
+    replace(g_surface_brush_dark, g_aux_dark.surface);
+    replace(g_field_brush_light, g_aux_light.field_bg);
+    replace(g_field_brush_dark, g_aux_dark.field_bg);
+}
+
 Gdiplus::Graphics* graphics_on(HDC dc) {
     Gdiplus::Graphics* g = new Gdiplus::Graphics(dc);
     g->SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
@@ -193,43 +382,12 @@ void init() {
 }
 
 const Palette& palette() {
-    static const Palette light = []() {
-        Palette p;
-        p.chrome_bg = RGB(243, 243, 246);
-        p.chrome_text = RGB(32, 33, 36);
-        p.chrome_muted = RGB(110, 116, 124);
-        p.active_tab_bg = RGB(255, 255, 255);
-        p.hover_chip = RGB(231, 232, 237);
-        p.pressed_chip = RGB(222, 223, 229);
-        p.outline = RGB(214, 216, 221);
-        p.omnibox_bg = RGB(255, 255, 255);
-        p.omnibox_border = RGB(206, 209, 215);
-        p.omnibox_focus = RGB(224, 128, 60);
-        p.accent = RGB(224, 128, 60);
-        p.separator = RGB(220, 222, 227);
-        p.content_bg = RGB(255, 255, 255);
-        p.danger_hover = RGB(242, 139, 130);
-        return p;
-    }();
-    static const Palette dark = []() {
-        Palette p;
-        p.chrome_bg = RGB(32, 33, 36);
-        p.chrome_text = RGB(226, 228, 232);
-        p.chrome_muted = RGB(154, 160, 166);
-        p.active_tab_bg = RGB(54, 57, 63);
-        p.hover_chip = RGB(44, 47, 52);
-        p.pressed_chip = RGB(50, 54, 59);
-        p.outline = RGB(60, 64, 67);
-        p.omnibox_bg = RGB(42, 45, 49);
-        p.omnibox_border = RGB(68, 72, 77);
-        p.omnibox_focus = RGB(224, 128, 60);
-        p.accent = RGB(224, 128, 60);
-        p.separator = RGB(52, 55, 60);
-        p.content_bg = RGB(32, 33, 36);
-        p.danger_hover = RGB(197, 87, 77);
-        return p;
-    }();
-    return dark_chrome() ? dark : light;
+    static bool seeded = false;
+    if (!seeded) {
+        apply_named_theme("auto", std::string());
+        seeded = true;
+    }
+    return dark_chrome() ? g_pal_dark : g_pal_light;
 }
 
 bool dark_chrome() {
@@ -250,40 +408,97 @@ bool system_prefers_dark() {
     return status == ERROR_SUCCESS && value == 0;
 }
 
+const std::vector<std::string>& theme_names() {
+    static const std::vector<std::string> names = {
+        "auto", "light", "dark", "nord", "dracula", "catppuccin", "solarized"
+    };
+    return names;
+}
+
+bool is_known_theme(const std::string& name) {
+    return name == "auto" || name == "light" || name == "dark"
+        || find_theme(name) != nullptr;
+}
+
+void apply_named_theme(const std::string& name, const std::string& accent_hex) {
+    g_pal_light = builtin_light_palette();
+    g_pal_dark = builtin_dark_palette();
+    g_aux_light = builtin_light_aux();
+    g_aux_dark = builtin_dark_aux();
+
+    if (const ThemeSpec* spec = find_theme(name)) {
+        // A named palette fills both slots: the theme is the character of the
+        // browser now, not a light/dark flip.
+        g_pal_light = spec->palette;
+        g_pal_dark = spec->palette;
+        g_aux_light = spec->aux;
+        g_aux_dark = spec->aux;
+        g_dark_chrome = spec->dark;
+    } else if (name == "light") {
+        g_dark_chrome = false;
+    } else if (name == "dark") {
+        g_dark_chrome = true;
+    } else {
+        // "auto" (and anything unknown): follow the Windows app mode.
+        g_dark_chrome = system_prefers_dark();
+    }
+
+    if (COLORREF accent = parse_hex_color(accent_hex); accent != CLR_INVALID) {
+        g_pal_light.accent = accent;
+        g_pal_light.omnibox_focus = accent;
+        g_pal_dark.accent = accent;
+        g_pal_dark.omnibox_focus = accent;
+    }
+
+    refresh_aux_brushes();
+}
+
+bool theme_preview(const std::string& name, COLORREF* bg, COLORREF* text,
+                   COLORREF* accent) {
+    if (!bg || !text || !accent) return false;
+    if (name == "auto" || name == "light" || name == "dark") {
+        bool dark = name == "dark"
+            || (name == "auto" && system_prefers_dark());
+        const Palette& p = dark ? builtin_dark_palette() : builtin_light_palette();
+        *bg = p.chrome_bg;
+        *text = p.chrome_text;
+        *accent = p.accent;
+        return true;
+    }
+    if (const ThemeSpec* spec = find_theme(name)) {
+        *bg = spec->palette.chrome_bg;
+        *text = spec->palette.chrome_text;
+        *accent = spec->palette.accent;
+        return true;
+    }
+    return false;
+}
+
 const AuxTheme& aux_theme() {
-    static const AuxTheme light = []() {
-        AuxTheme t;
-        t.surface = RGB(245, 246, 249);
-        t.ink = RGB(32, 33, 36);
-        t.muted = RGB(110, 116, 124);
-        t.field_bg = RGB(255, 255, 255);
-        t.outline = RGB(206, 209, 215);
-        return t;
-    }();
-    static const AuxTheme dark = []() {
-        AuxTheme t;
-        t.surface = RGB(26, 27, 30);
-        t.ink = RGB(226, 228, 232);
-        t.muted = RGB(154, 160, 166);
-        t.field_bg = RGB(36, 38, 41);
-        t.outline = RGB(60, 64, 67);
-        return t;
-    }();
-    return dark_chrome() ? dark : light;
+    static bool seeded = false;
+    if (!seeded) {
+        apply_named_theme("auto", std::string());
+        seeded = true;
+    }
+    return dark_chrome() ? g_aux_dark : g_aux_light;
 }
 
 HBRUSH aux_surface_brush() {
-    static HBRUSH light = CreateSolidBrush(aux_theme().surface);
-    static HBRUSH dark = nullptr;
-    if (!dark) dark = CreateSolidBrush(RGB(26, 27, 30));
-    return dark_chrome() ? dark : light;
+    static bool seeded = false;
+    if (!seeded) {
+        refresh_aux_brushes();
+        seeded = true;
+    }
+    return dark_chrome() ? g_surface_brush_dark : g_surface_brush_light;
 }
 
 HBRUSH aux_field_brush() {
-    static HBRUSH light = CreateSolidBrush(aux_theme().field_bg);
-    static HBRUSH dark = nullptr;
-    if (!dark) dark = CreateSolidBrush(RGB(36, 38, 41));
-    return dark_chrome() ? dark : light;
+    static bool seeded = false;
+    if (!seeded) {
+        refresh_aux_brushes();
+        seeded = true;
+    }
+    return dark_chrome() ? g_field_brush_dark : g_field_brush_light;
 }
 
 COLORREF blend(COLORREF base, COLORREF color, int alpha) {
@@ -473,6 +688,58 @@ void draw_glyph(HDC dc, const RECT& rect, Glyph glyph, COLORREF color,
             Gdiplus::RectF box(X(8 - r), Y(8 - r), 2 * r * unit, 2 * r * unit);
             float start = static_cast<float>(spin_phase % 16) * 22.5f;
             g->DrawArc(pen.get(), box, start, 100.0f);
+            break;
+        }
+        case Glyph::Palette: {
+            // Droplet: apex at the top, round belly at the bottom.
+            float r = 3.3f;
+            Gdiplus::RectF box(X(8 - r), Y(9.7f - r), 2 * r * unit, 2 * r * unit);
+            auto at = [&](float deg) {
+                float a = deg * kPi / 180.0f;
+                return Gdiplus::PointF(X(8 + r * std::cos(a)),
+                                       Y(9.7f + r * std::sin(a)));
+            };
+            Gdiplus::GraphicsPath drop;
+            drop.StartFigure();
+            drop.AddLine(X(8), Y(2.6f), at(245).X, at(245).Y);
+            drop.AddArc(box, 245.0f, 310.0f);
+            drop.CloseFigure();
+            g->DrawPath(pen.get(), &drop);
+            break;
+        }
+        case Glyph::Shield: {
+            Gdiplus::GraphicsPath shield;
+            shield.StartFigure();
+            shield.AddLine(X(4), Y(3.6f), X(12), Y(3.6f));
+            shield.AddLine(X(12), Y(3.6f), X(12), Y(8.0f));
+            shield.AddBezier(X(12), Y(8.0f), X(12), Y(10.8f), X(10.2f), Y(12.4f),
+                             X(8), Y(13.4f));
+            shield.AddBezier(X(8), Y(13.4f), X(5.8f), Y(12.4f), X(4), Y(10.8f),
+                             X(4), Y(8.0f));
+            shield.CloseFigure();
+            g->DrawPath(pen.get(), &shield);
+            break;
+        }
+        case Glyph::Database: {
+            Gdiplus::RectF top(X(3), Y(3.2f), 10 * unit, 3.2f * unit);
+            Gdiplus::RectF mid(X(3), Y(6.4f), 10 * unit, 3.2f * unit);
+            Gdiplus::RectF bot(X(3), Y(9.6f), 10 * unit, 3.2f * unit);
+            g->DrawEllipse(pen.get(), top);
+            g->DrawLine(pen.get(), X(3), Y(4.8f), X(3), Y(11.2f));
+            g->DrawLine(pen.get(), X(13), Y(4.8f), X(13), Y(11.2f));
+            g->DrawArc(pen.get(), mid, 0.0f, 180.0f);
+            g->DrawArc(pen.get(), bot, 0.0f, 180.0f);
+            break;
+        }
+        case Glyph::Home: {
+            g->DrawLine(pen.get(), X(2.8f), Y(8.2f), X(8), Y(3.4f));
+            g->DrawLine(pen.get(), X(8), Y(3.4f), X(13.2f), Y(8.2f));
+            g->DrawLine(pen.get(), X(4.4f), Y(7.4f), X(4.4f), Y(12.6f));
+            g->DrawLine(pen.get(), X(4.4f), Y(12.6f), X(11.6f), Y(12.6f));
+            g->DrawLine(pen.get(), X(11.6f), Y(12.6f), X(11.6f), Y(7.4f));
+            g->DrawLine(pen.get(), X(6.8f), Y(12.6f), X(6.8f), Y(9.8f));
+            g->DrawLine(pen.get(), X(6.8f), Y(9.8f), X(9.2f), Y(9.8f));
+            g->DrawLine(pen.get(), X(9.2f), Y(9.8f), X(9.2f), Y(12.6f));
             break;
         }
         default:
