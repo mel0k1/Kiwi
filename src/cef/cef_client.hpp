@@ -67,6 +67,10 @@ class KiwiClient : public CefClient,
 public:
     KiwiClient(TabHost* host, bool private_tab);
 
+    // Re-points the shell callbacks. Used when a tab is torn off into another
+    // shell window and its existing client must follow the browser there.
+    void set_host(TabHost* host) { host_ = host; }
+
     CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
     CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
     CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }

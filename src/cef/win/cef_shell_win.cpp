@@ -43,6 +43,9 @@ namespace kiwi {
 using gfx::fill_round_rect;
 using gfx::stroke_round_rect;
 
+class CefShell;
+std::vector<CefShell*>& shell_windows();
+
 namespace {
 
 constexpr wchar_t kWindowClass[] = L"KiwiCefShell";
@@ -67,9 +70,21 @@ enum ContextMenuId {
     TABCTX_NEW = 1,
     TABCTX_RELOAD,
     TABCTX_DUPLICATE,
+    TABCTX_DETACH,
     TABCTX_CLOSE,
     TABCTX_CLOSE_OTHERS
 };
+
+enum DevToolsDock {
+    DOCK_BOTTOM = 0,
+    DOCK_LEFT = 1,
+    DOCK_RIGHT = 2
+};
+
+constexpr int kDockMenuBottom = 1;
+constexpr int kDockMenuLeft = 2;
+constexpr int kDockMenuRight = 3;
+constexpr int kDockMenuClose = 4;
 
 struct WinTab {
     int browser_id = 0;
@@ -193,6 +208,18 @@ HICON app_icon(int px) {
         IMAGE_ICON, px, px, LR_DEFAULTCOLOR));
 }
 
+// Keeps a tear-off window inside the monitor work area of the cursor.
+void clamp_to_workarea(POINT& pos, int width, int height) {
+    HMONITOR monitor = MonitorFromPoint(pos, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info = {sizeof(info)};
+    if (!GetMonitorInfoW(monitor, &info)) return;
+    const RECT& work = info.rcWork;
+    if (pos.x + width > work.right) pos.x = work.right - width;
+    if (pos.y + height > work.bottom) pos.y = work.bottom - height;
+    if (pos.x < work.left) pos.x = work.left;
+    if (pos.y < work.top) pos.y = work.top;
+}
+
 }  // namespace
 
 class CefShell : public TabHost {
@@ -200,6 +227,7 @@ public:
     int exec();
     void store_geometry();
     void set_self_test(bool enabled) { self_test_ = enabled; }
+    void set_primary(bool primary) { primary_ = primary; }
     HWND main_hwnd() const { return hwnd_; }
     void open_in_new_tab(const std::string& url);
 
@@ -253,6 +281,16 @@ private:
     RECT drag_ghost_rect() const;
     void move_tab(int from, int to);
     bool devtools_docked_visible() const;
+    bool devtools_bar_hit(const POINT& client_pt) const;
+    void set_devtools_dock(int dock);
+    void open_devtools_dock_menu(const POINT& screen);
+    bool tear_zone_at(const POINT& client_pt) const;
+    RECT tear_ghost_rect() const;
+    void tear_off_window(int index, const POINT& screen);
+    void adopt_tab(WinTab tab);
+    void show_tear_hint();
+    void move_tear_hint(const POINT& client_pt);
+    void hide_tear_hint();
 
     void sync_spin_timer();
     void set_tab_loading(int browser_id, bool loading);
@@ -329,6 +367,7 @@ private:
         RECT host = {};
         RECT devtools = {};
         RECT devtools_bar = {};
+        RECT devtools_base = {};
     } lay_;
 
     int find_seq_ = 0;
@@ -353,6 +392,7 @@ private:
 
     int drag_tab_ = -1;
     bool drag_active_ = false;
+    bool drag_tear_ = false;
     POINT drag_start_ = {};
     POINT drag_pos_ = {};
     int grab_dx_ = 0;
@@ -363,6 +403,11 @@ private:
     int grab_scroll_ = 0;
     bool drag_split_ = false;
     int tab_scroll_ = 0;
+
+    int devtools_dock_ = DOCK_BOTTOM;
+    HWND tear_hint_ = nullptr;
+    bool primary_ = false;
+    POINT init_pos_ = {-1, -1};
 
     CefRefPtr<CefBrowser> devtools_browser_;
     int devtools_tab_id_ = 0;
@@ -377,6 +422,11 @@ private:
 };
 
 CefShell* g_shell = nullptr;
+
+std::vector<CefShell*>& shell_windows() {
+    static std::vector<CefShell*> windows;
+    return windows;
+}
 
 int CefShell::exec() {
     trace_stage("shell: create_window begin");
@@ -456,7 +506,11 @@ bool CefShell::create_window() {
     icon_small_ = app_icon(GetSystemMetrics(SM_CXSMICON));
     wc.hIcon = icon_big_;
     wc.hIconSm = icon_small_;
-    if (!RegisterClassExW(&wc)) return false;
+    static bool class_registered = false;
+    if (!class_registered) {
+        if (!RegisterClassExW(&wc)) return false;
+        class_registered = true;
+    }
 
     Runtime* rt = runtime();
     int width = rt ? rt->settings.window_width : 1280;
@@ -464,10 +518,14 @@ bool CefShell::create_window() {
 
     RECT area = {0, 0, width, height};
     AdjustWindowRect(&area, WS_OVERLAPPEDWINDOW, FALSE);
+    int pos_x = init_pos_.x >= 0 ? init_pos_.x : CW_USEDEFAULT;
+    int pos_y = init_pos_.y >= 0 ? init_pos_.y : CW_USEDEFAULT;
+    init_pos_ = {-1, -1};
     hwnd_ = CreateWindowExW(0, kWindowClass, L"Kiwi", WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, area.right - area.left, area.bottom - area.top,
+        pos_x, pos_y, area.right - area.left, area.bottom - area.top,
         nullptr, nullptr, GetModuleHandleW(nullptr), this);
     if (!hwnd_) return false;
+    shell_windows().push_back(this);
 
     font_ = CreateFontW(-MulDiv(10, dpi_for(hwnd_), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE,
         FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
@@ -475,10 +533,15 @@ bool CefShell::create_window() {
 
     style_ = kiwi::load_shell_style(rt ? rt->config_dir : std::string());
     transparency_ = kiwi::load_shell_transparency(rt ? rt->config_dir : std::string());
+    std::string dock = kiwi::load_shell_devtools_dock(rt ? rt->config_dir : std::string());
+    devtools_dock_ = dock == "left" ? DOCK_LEFT
+                   : dock == "right" ? DOCK_RIGHT : DOCK_BOTTOM;
     gfx::init();
     if (rt) favicons::set_profile_root(rt->profile_root);
-    favicons::set_notifier([this]() {
-        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    favicons::set_notifier([]() {
+        for (CefShell* window : shell_windows()) {
+            if (window->hwnd_) InvalidateRect(window->hwnd_, nullptr, FALSE);
+        }
     });
     devtools_client_->set_on_created([this](CefRefPtr<CefBrowser> browser) {
         devtools_browser_ = browser;
@@ -623,7 +686,13 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             TrackMouseEvent(&track);
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             if (self->drag_split_) {
-                self->devtools_split_ = self->lay_.devtools.bottom - cl.y;
+                if (self->devtools_dock_ == DOCK_LEFT) {
+                    self->devtools_split_ = cl.x - self->lay_.devtools_base.left;
+                } else if (self->devtools_dock_ == DOCK_RIGHT) {
+                    self->devtools_split_ = self->lay_.devtools_base.right - cl.x;
+                } else {
+                    self->devtools_split_ = self->lay_.devtools_base.bottom - cl.y;
+                }
                 self->layout();
                 return 0;
             }
@@ -657,8 +726,19 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 }
                 if (self->drag_active_) {
                     self->drag_pos_ = cl;
-                    self->drop_slot_ = self->drop_slot_at(cl);
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    bool tear = self->tear_zone_at(cl);
+                    if (tear != self->drag_tear_) {
+                        self->drag_tear_ = tear;
+                        self->drop_slot_ = tear ? -1 : self->drop_slot_at(cl);
+                        if (tear) self->show_tear_hint();
+                        else self->hide_tear_hint();
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    } else if (tear) {
+                        self->move_tear_hint(cl);
+                    } else {
+                        self->drop_slot_ = self->drop_slot_at(cl);
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                    }
                 }
                 return 0;
             }
@@ -761,7 +841,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         }
         case WM_LBUTTONDOWN: {
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            if (self->devtools_docked_visible() && PtInRect(&self->lay_.devtools_bar, cl)) {
+            if (self->devtools_bar_hit(cl)) {
                 self->drag_split_ = true;
                 SetCapture(hwnd);
                 return 0;
@@ -791,8 +871,10 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 self->drag_start_ = cl;
                 if (self->lay_.zen) {
                     self->grab_dy_ = cl.y - chip.top;
+                    self->grab_dx_ = (chip.right - chip.left) / 2;
                 } else {
                     self->grab_dx_ = cl.x - chip.left;
+                    self->grab_dy_ = (chip.bottom - chip.top) / 2;
                 }
                 SetCapture(hwnd);
                 self->activate_index(tab);
@@ -829,51 +911,61 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         }
         case WM_LBUTTONUP: {
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-            bool captured = GetCapture() == hwnd;
-            if (captured) ReleaseCapture();
-            if (self->drag_split_) {
-                self->drag_split_ = false;
-                return 0;
-            }
-            if (self->drag_thumb_) {
-                self->drag_thumb_ = false;
-                return 0;
-            }
-            if (self->drag_tab_ >= 0) {
-                int from = self->drag_tab_;
-                bool was_drag = self->drag_active_;
-                int to = self->drop_slot_;
-                self->drag_tab_ = -1;
-                self->drag_active_ = false;
-                self->drop_slot_ = -1;
-                if (was_drag && to >= 0 && to != from) self->move_tab(from, to);
-                InvalidateRect(hwnd, nullptr, FALSE);
-                return 0;
-            }
-            if (self->press_close_tab_ >= 0) {
-                int tab = self->press_close_tab_;
-                self->press_close_tab_ = -1;
-                RECT chip = self->tab_chip_rect(tab, self->tab_width_for(
-                    static_cast<int>(self->tabs_.size())));
-                RECT crect = self->tab_close_rect(chip);
-                if (tab < static_cast<int>(self->tabs_.size())
-                    && cl.x >= chip.left && cl.x <= chip.right
-                    && cl.y >= chip.top && cl.y <= chip.bottom
-                    && PtInRect(&crect, cl)) {
-                    self->close_index(tab);
+            // Snapshot the press/drag state first: ReleaseCapture delivers
+            // WM_CAPTURECHANGED synchronously and that handler resets all of
+            // the flags below before the commit code gets to read them.
+            const bool had_split = self->drag_split_;
+            const bool had_thumb = self->drag_thumb_;
+            const int drag_from = self->drag_tab_;
+            const bool drag_was_active = self->drag_active_;
+            const bool drag_was_tear = self->drag_tear_;
+            const int drag_to = self->drop_slot_;
+            const int close_tab = self->press_close_tab_;
+            const bool add_press = self->press_add_;
+            const int tool = self->press_tool_;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            self->drag_split_ = false;
+            self->drag_thumb_ = false;
+            self->drag_tab_ = -1;
+            self->drag_active_ = false;
+            self->drag_tear_ = false;
+            self->drop_slot_ = -1;
+            self->press_close_tab_ = -1;
+            self->press_add_ = false;
+            self->press_tool_ = -1;
+            if (had_split) return 0;
+            if (had_thumb) return 0;
+            if (drag_from >= 0) {
+                if (drag_was_active && drag_was_tear) {
+                    self->hide_tear_hint();
+                    POINT screen = cl;
+                    ClientToScreen(hwnd, &screen);
+                    self->tear_off_window(drag_from, screen);
+                } else if (drag_was_active && drag_to >= 0 && drag_to != drag_from) {
+                    self->move_tab(drag_from, drag_to);
                 }
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (self->press_add_) {
-                self->press_add_ = false;
+            if (close_tab >= 0) {
+                RECT chip = self->tab_chip_rect(close_tab, self->tab_width_for(
+                    static_cast<int>(self->tabs_.size())));
+                RECT crect = self->tab_close_rect(chip);
+                if (close_tab < static_cast<int>(self->tabs_.size())
+                    && cl.x >= chip.left && cl.x <= chip.right
+                    && cl.y >= chip.top && cl.y <= chip.bottom
+                    && PtInRect(&crect, cl)) {
+                    self->close_index(close_tab);
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (add_press) {
                 if (PtInRect(&self->lay_.add_btn, cl)) self->on_hotkey(HK_NEW_TAB);
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (self->press_tool_ >= 0) {
-                int tool = self->press_tool_;
-                self->press_tool_ = -1;
+            if (tool >= 0) {
                 if (tool < 5 && PtInRect(&self->lay_.tool_btns[tool], cl)) {
                     switch (tool) {
                         case 0:
@@ -906,9 +998,11 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             self->press_add_ = false;
             self->drag_tab_ = -1;
             self->drag_active_ = false;
+            self->drag_tear_ = false;
             self->drop_slot_ = -1;
             self->drag_thumb_ = false;
             self->drag_split_ = false;
+            self->hide_tear_hint();
             return 0;
         case WM_MBUTTONUP: {
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
@@ -920,6 +1014,10 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             POINT cl = {GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
             POINT screen = cl;
             ClientToScreen(hwnd, &screen);
+            if (self->devtools_bar_hit(cl)) {
+                self->open_devtools_dock_menu(screen);
+                return 0;
+            }
             int tab = self->tab_at(cl);
             self->open_tab_context_menu(tab, screen);
             return 0;
@@ -945,8 +1043,9 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 POINT pt;
                 GetCursorPos(&pt);
                 ScreenToClient(hwnd, &pt);
-                if (self->devtools_docked_visible() && PtInRect(&self->lay_.devtools_bar, pt)) {
-                    SetCursor(LoadCursorW(nullptr, IDC_SIZENS));
+                if (self->devtools_bar_hit(pt)) {
+                    SetCursor(LoadCursorW(nullptr,
+                        self->devtools_dock_ == DOCK_BOTTOM ? IDC_SIZENS : IDC_SIZEWE));
                     return TRUE;
                 }
             }
@@ -988,7 +1087,15 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             return 0;
         case WM_DESTROY:
             KillTimer(hwnd, kSpinTimer);
-            CefQuitMessageLoop();
+            self->hide_tear_hint();
+            if (self->tear_hint_) DestroyWindow(self->tear_hint_);
+            self->tear_hint_ = nullptr;
+            {
+                auto& windows = shell_windows();
+                windows.erase(std::remove(windows.begin(), windows.end(), self),
+                    windows.end());
+                if (windows.empty()) CefQuitMessageLoop();
+            }
             return 0;
         default:
             return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -1181,19 +1288,46 @@ void CefShell::layout() {
     }
 
     lay_.status = {0, h - status_h, w, h};
+    lay_.devtools_base = lay_.host;
     if (devtools_docked_visible()) {
-        int max_split = (lay_.host.bottom - lay_.host.top) - MulDiv(160, dpi, 96);
-        int min_split = MulDiv(96, dpi, 96);
         int split = devtools_split_;
-        if (split < min_split) split = min_split;
-        if (split > max_split) split = max_split;
-        if (split < min_split) split = min_split;
-        devtools_split_ = split;
-        lay_.devtools_bar = {lay_.host.left, lay_.host.bottom - split, lay_.host.right,
-                             lay_.host.bottom - split + MulDiv(4, dpi, 96)};
-        lay_.devtools = {lay_.host.left, lay_.devtools_bar.bottom, lay_.host.right,
-                         lay_.host.bottom};
-        lay_.host.bottom = lay_.devtools_bar.top;
+        if (devtools_dock_ == DOCK_BOTTOM) {
+            int max_split = (lay_.host.bottom - lay_.host.top) - MulDiv(160, dpi, 96);
+            int min_split = MulDiv(96, dpi, 96);
+            if (split < min_split) split = min_split;
+            if (split > max_split) split = max_split;
+            if (split < min_split) split = min_split;
+            devtools_split_ = split;
+            lay_.devtools_bar = {lay_.host.left, lay_.host.bottom - split, lay_.host.right,
+                                 lay_.host.bottom - split + MulDiv(4, dpi, 96)};
+            lay_.devtools = {lay_.host.left, lay_.devtools_bar.bottom, lay_.host.right,
+                             lay_.host.bottom};
+            lay_.host.bottom = lay_.devtools_bar.top;
+        } else {
+            int min_split = MulDiv(180, dpi, 96);
+            int avail = lay_.host.right - lay_.host.left;
+            int max_split = avail - MulDiv(320, dpi, 96);
+            if (max_split < min_split) max_split = avail > 0 ? avail : min_split;
+            if (split < min_split) split = min_split;
+            if (split > max_split) split = max_split;
+            devtools_split_ = split;
+            int bar_w = MulDiv(4, dpi, 96);
+            if (devtools_dock_ == DOCK_LEFT) {
+                lay_.devtools = {lay_.host.left, lay_.host.top, lay_.host.left + split,
+                                 lay_.host.bottom};
+                lay_.devtools_bar = {lay_.devtools.right, lay_.host.top,
+                                     lay_.devtools.right + bar_w, lay_.host.bottom};
+                lay_.host.left = lay_.devtools_bar.right;
+            } else {
+                lay_.devtools = {lay_.host.right - split, lay_.host.top, lay_.host.right,
+                                 lay_.host.bottom};
+                lay_.devtools_bar = {lay_.devtools.left - bar_w, lay_.host.top,
+                                     lay_.devtools.left, lay_.host.bottom};
+                lay_.host.right = lay_.devtools_bar.left;
+            }
+        }
+        if (lay_.host.right < lay_.host.left) lay_.host.right = lay_.host.left;
+        if (lay_.host.bottom < lay_.host.top) lay_.host.bottom = lay_.host.top;
     }
     clamp_tab_scroll();
     MoveWindow(host_, lay_.host.left, lay_.host.top,
@@ -1229,7 +1363,7 @@ void CefShell::layout() {
             tabs_[i].wheel_subclassed = true;
         }
         if (i == active_) {
-            MoveWindow(browser_hwnd, lay_.host.left, lay_.host.top,
+            MoveWindow(browser_hwnd, 0, 0,
                 lay_.host.right - lay_.host.left > 0 ? lay_.host.right - lay_.host.left : 0,
                 lay_.host.bottom - lay_.host.top > 0 ? lay_.host.bottom - lay_.host.top : 0,
                 TRUE);
@@ -1424,6 +1558,209 @@ bool CefShell::devtools_docked_visible() const {
     return tabs_[static_cast<size_t>(active_)].browser_id == devtools_tab_id_;
 }
 
+bool CefShell::devtools_bar_hit(const POINT& cl) const {
+    if (!devtools_docked_visible()) return false;
+    RECT hit = lay_.devtools_bar;
+    int pad = MulDiv(2, lay_.dpi, 96);
+    InflateRect(&hit, pad, pad);
+    return PtInRect(&hit, cl) != FALSE;
+}
+
+void CefShell::set_devtools_dock(int dock) {
+    if (dock < DOCK_BOTTOM || dock > DOCK_RIGHT || dock == devtools_dock_) return;
+    devtools_dock_ = dock;
+    Runtime* rt = runtime();
+    save_shell_devtools_dock(rt ? rt->config_dir : std::string(),
+        dock == DOCK_LEFT ? "left" : dock == DOCK_RIGHT ? "right" : "bottom");
+    layout();
+}
+
+void CefShell::open_devtools_dock_menu(const POINT& screen) {
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | (devtools_dock_ == DOCK_BOTTOM ? MF_CHECKED : MF_UNCHECKED),
+        kDockMenuBottom, L"Dock to bottom");
+    AppendMenuW(menu, MF_STRING | (devtools_dock_ == DOCK_LEFT ? MF_CHECKED : MF_UNCHECKED),
+        kDockMenuLeft, L"Dock to left");
+    AppendMenuW(menu, MF_STRING | (devtools_dock_ == DOCK_RIGHT ? MF_CHECKED : MF_UNCHECKED),
+        kDockMenuRight, L"Dock to right");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kDockMenuClose, L"Close DevTools");
+    SetForegroundWindow(hwnd_);
+    int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+        screen.x, screen.y, 0, hwnd_, nullptr);
+    DestroyMenu(menu);
+    switch (cmd) {
+        case kDockMenuBottom:
+            set_devtools_dock(DOCK_BOTTOM);
+            break;
+        case kDockMenuLeft:
+            set_devtools_dock(DOCK_LEFT);
+            break;
+        case kDockMenuRight:
+            set_devtools_dock(DOCK_RIGHT);
+            break;
+        case kDockMenuClose:
+            toggle_devtools();
+            break;
+        default:
+            break;
+    }
+}
+
+bool CefShell::tear_zone_at(const POINT& cl) const {
+    RECT zone = lay_.tab_area;
+    int margin = MulDiv(12, lay_.dpi, 96);
+    zone.left -= margin;
+    zone.top -= margin;
+    zone.right += margin;
+    zone.bottom += margin;
+    return PtInRect(&zone, cl) == FALSE;
+}
+
+RECT CefShell::tear_ghost_rect() const {
+    RECT chip = tab_chip_rect(drag_tab_, tab_width_for(static_cast<int>(tabs_.size())));
+    int width = chip.right - chip.left;
+    int height = chip.bottom - chip.top;
+    RECT ghost;
+    ghost.left = drag_pos_.x - grab_dx_;
+    ghost.top = drag_pos_.y - grab_dy_;
+    ghost.right = ghost.left + width;
+    ghost.bottom = ghost.top + height;
+    return ghost;
+}
+
+void CefShell::show_tear_hint() {
+    if (drag_tab_ < 0 || drag_tab_ >= static_cast<int>(tabs_.size())) return;
+    RECT chip = tab_chip_rect(drag_tab_, tab_width_for(static_cast<int>(tabs_.size())));
+    int w = chip.right - chip.left;
+    int h = chip.bottom - chip.top;
+    if (w <= 0 || h <= 0) return;
+    if (!tear_hint_) {
+        tear_hint_ = CreateWindowExW(WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW
+            | WS_EX_TOPMOST | WS_EX_NOACTIVATE, L"STATIC", nullptr, WS_POPUP,
+            0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!tear_hint_) return;
+    }
+    HDC screen = GetDC(nullptr);
+    if (!screen) return;
+    HDC mem = CreateCompatibleDC(screen);
+    BITMAPINFO info = {};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = w;
+    info.bmiHeader.biHeight = -h;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bmp = CreateDIBSection(mem, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (bmp && bits) {
+        HGDIOBJ old_bmp = SelectObject(mem, bmp);
+        RECT full = {0, 0, w, h};
+        fill_rect_color(mem, full, gfx::palette().active_tab_bg);
+        draw_tab(mem, drag_tab_, full);
+        auto* pixels = static_cast<uint32_t*>(bits);
+        for (int i = 0; i < w * h; ++i) pixels[i] |= 0xFF000000u;
+        POINT src = {0, 0};
+        POINT pos = {0, 0};
+        if (hwnd_) {
+            POINT cursor = drag_pos_;
+            ClientToScreen(hwnd_, &cursor);
+            pos.x = cursor.x - grab_dx_;
+            pos.y = cursor.y - grab_dy_;
+        }
+        SIZE size = {w, h};
+        BLENDFUNCTION blend = {AC_SRC_OVER, 0, 255, 0};
+        UpdateLayeredWindow(tear_hint_, screen, &pos, &size, mem, &src, 0, &blend,
+            ULW_ALPHA);
+        SelectObject(mem, old_bmp);
+    }
+    if (bmp) DeleteObject(bmp);
+    DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+    ShowWindow(tear_hint_, SW_SHOWNA);
+}
+
+void CefShell::move_tear_hint(const POINT& client_pt) {
+    if (!tear_hint_ || !hwnd_) return;
+    POINT screen = client_pt;
+    ClientToScreen(hwnd_, &screen);
+    SetWindowPos(tear_hint_, HWND_TOPMOST, screen.x - grab_dx_, screen.y - grab_dy_,
+        0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+void CefShell::hide_tear_hint() {
+    if (tear_hint_) ShowWindow(tear_hint_, SW_HIDE);
+}
+
+void CefShell::tear_off_window(int index, const POINT& screen) {
+    if (index < 0 || index >= static_cast<int>(tabs_.size())) return;
+    WinTab& moving = tabs_[static_cast<size_t>(index)];
+    if (devtools_tab_id_ != 0 && moving.browser_id == devtools_tab_id_
+        && devtools_browser_) {
+        devtools_browser_->GetHost()->CloseDevTools();
+    }
+    CefShell* window = new CefShell();
+    Runtime* rt = runtime();
+    int width = rt ? rt->settings.window_width : 1280;
+    int height = rt ? rt->settings.window_height : 800;
+    RECT area = {0, 0, width, height};
+    AdjustWindowRect(&area, WS_OVERLAPPEDWINDOW, FALSE);
+    if (screen.x >= 0) {
+        window->init_pos_ = screen;
+        window->init_pos_.x -= scale_for(hwnd_, 80);
+        window->init_pos_.y -= scale_for(hwnd_, 180);
+        clamp_to_workarea(window->init_pos_, area.right - area.left,
+            area.bottom - area.top);
+    }
+    if (!window->create_window()) {
+        delete window;
+        return;
+    }
+    if (moving.browser) {
+        WinTab tab = std::move(moving);
+        tabs_.erase(tabs_.begin() + index);
+        window->adopt_tab(std::move(tab));
+    } else {
+        std::string url = moving.url;
+        bool private_tab = moving.private_tab;
+        tabs_.erase(tabs_.begin() + index);
+        if (url.empty() || is_start_page_entry(url)) url = start_uri(private_tab);
+        window->add_tab(url, private_tab);
+        window->activate_index(0);
+    }
+    if (active_ > index) --active_;
+    if (tabs_.empty()) {
+        PostMessageW(hwnd_, WM_CLOSE, 0, 0);
+        return;
+    }
+    activate_index(std::min(std::max(active_, 0),
+        static_cast<int>(tabs_.size()) - 1));
+}
+
+void CefShell::adopt_tab(WinTab tab) {
+    tabs_.push_back(std::move(tab));
+    WinTab& adopted = tabs_.back();
+    active_ = 0;
+    if (adopted.browser) {
+        CefRefPtr<CefClient> client = adopted.browser->GetHost()->GetClient();
+        auto* kiwi_client = static_cast<KiwiClient*>(client.get());
+        if (kiwi_client) kiwi_client->set_host(this);
+        HWND browser_hwnd = adopted.browser->GetHost()->GetWindowHandle();
+        RemoveWindowSubclass(browser_hwnd, browser_wheel_proc, 2);
+        SetWindowSubclass(browser_hwnd, browser_wheel_proc, 2,
+            reinterpret_cast<DWORD_PTR>(this));
+        adopted.wheel_subclassed = true;
+        SetParent(browser_hwnd, host_);
+    }
+    layout();
+    update_omnibox();
+    update_window_title();
+    if (adopted.browser) {
+        SetFocus(adopted.browser->GetHost()->GetWindowHandle());
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 RECT CefShell::tab_chip_rect(int index, int tab_w) const {
     int dpi = lay_.dpi;
     RECT rect;
@@ -1536,7 +1873,7 @@ bool CefShell::chrome_is_drag_zone(const POINT& cl) const {
     if (tab_at(cl) >= 0) return false;
     RECT thumb = tab_thumb_rect();
     if (!IsRectEmpty(&thumb) && PtInRect(&thumb, cl)) return false;
-    if (devtools_docked_visible() && PtInRect(&lay_.devtools_bar, cl)) return false;
+    if (devtools_bar_hit(cl)) return false;
     if (PtInRect(&lay_.min_btn, cl) || PtInRect(&lay_.max_btn, cl)
         || PtInRect(&lay_.close_btn, cl)) {
         return false;
@@ -1605,9 +1942,10 @@ void CefShell::draw_tabs(HDC dc) {
     int n = static_cast<int>(tabs_.size());
     if (!n) return;
     draw_add_button(dc, lay_.add_btn);
+    bool reorder_drag = drag_active_ && !drag_tear_ && drag_tab_ >= 0 && drag_tab_ < n;
     std::vector<int> order(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) order[static_cast<size_t>(i)] = i;
-    if (drag_active_ && drag_tab_ >= 0 && drag_tab_ < n) {
+    if (reorder_drag) {
         order.erase(order.begin() + drag_tab_);
         int slot = drop_slot_ >= 0 && drop_slot_ < n ? drop_slot_ : n - 1;
         order.insert(order.begin() + slot, drag_tab_);
@@ -1618,13 +1956,18 @@ void CefShell::draw_tabs(HDC dc) {
     int tab_w = tab_width_for(n);
     for (int slot = 0; slot < n; ++slot) {
         int idx = order[static_cast<size_t>(slot)];
-        if (drag_active_ && idx == drag_tab_) continue;
+        if (reorder_drag && idx == drag_tab_) continue;
         draw_tab(dc, idx, tab_chip_rect(slot, tab_w));
     }
-    if (drag_active_ && drag_tab_ >= 0 && drag_tab_ < n) {
+    if (reorder_drag) {
         draw_tab(dc, drag_tab_, drag_ghost_rect());
     }
     RestoreDC(dc, saved);
+    if (drag_tear_ && drag_tab_ >= 0 && drag_tab_ < n) {
+        RECT ghost = tear_ghost_rect();
+        draw_tab(dc, drag_tab_, ghost);
+        stroke_round_rect(dc, ghost, 8, lay_.dpi, gfx::palette().omnibox_focus, 1.0f);
+    }
     RECT thumb = tab_thumb_rect();
     if (!IsRectEmpty(&thumb)) {
         fill_round_rect(dc, thumb, 2, lay_.dpi, gfx::palette().chrome_muted);
@@ -1820,6 +2163,7 @@ void CefShell::open_tab_context_menu(int index, const POINT& screen) {
         const WinTab& tab = tabs_[index];
         AppendMenuW(menu, MF_STRING, TABCTX_RELOAD, L"Reload");
         AppendMenuW(menu, MF_STRING, TABCTX_DUPLICATE, L"Duplicate tab");
+        AppendMenuW(menu, MF_STRING, TABCTX_DETACH, L"Move tab to new window");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, TABCTX_CLOSE, L"Close tab");
         AppendMenuW(menu, MF_STRING, TABCTX_CLOSE_OTHERS, L"Close other tabs");
@@ -1851,6 +2195,11 @@ void CefShell::open_tab_context_menu(int index, const POINT& screen) {
             if (url.empty() || is_start_page_entry(url)) break;
             int next = add_tab(url, private_tab);
             activate_index(next);
+            break;
+        }
+        case TABCTX_DETACH: {
+            POINT anywhere = {-1, -1};
+            tear_off_window(index, anywhere);
             break;
         }
         case TABCTX_CLOSE:
@@ -2009,7 +2358,11 @@ void CefShell::toggle_devtools() {
     if (devtools_split_ <= 0) {
         RECT client;
         GetClientRect(hwnd_, &client);
-        devtools_split_ = MulDiv(client.bottom - client.top, 2, 5);
+        if (devtools_dock_ == DOCK_BOTTOM) {
+            devtools_split_ = MulDiv(client.bottom - client.top, 2, 5);
+        } else {
+            devtools_split_ = MulDiv(client.right - client.left, 2, 5);
+        }
     }
     CefWindowInfo info;
     info.SetAsChild(hwnd_, CefRect(0, 0, 10, 10));
@@ -2120,6 +2473,7 @@ void CefShell::update_window_title() {
 }
 
 void CefShell::save_session_now() {
+    if (!primary_) return;
     Runtime* rt = runtime();
     if (!rt || !rt->settings.session_restore) return;
     mustela::SessionData data;
@@ -2134,6 +2488,7 @@ void CefShell::save_session_now() {
 }
 
 bool CefShell::restore_session() {
+    if (!primary_) return false;
     Runtime* rt = runtime();
     if (!rt || !rt->settings.session_restore) return false;
     mustela::SessionData data;
@@ -2190,6 +2545,10 @@ void CefShell::on_created(CefRefPtr<CefBrowser> browser) {
             return;
         }
     }
+    // No slot expects this browser: it belongs to a tab that was torn off or
+    // removed before creation finished. Park it closed instead of leaking a
+    // 10x10 orphan window on the old host.
+    browser->GetHost()->CloseBrowser(false);
 }
 
 void CefShell::on_closed(int browser_id) {
@@ -2372,6 +2731,7 @@ void CefShell::on_hotkey(Hotkey key) {
 int cef_shell_main(bool self_test) {
     static CefShell shell;
     g_shell = &shell;
+    shell.set_primary(true);
     shell.set_self_test(self_test);
     int result = shell.exec();
     g_shell = nullptr;

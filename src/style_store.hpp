@@ -23,4 +23,9 @@ bool is_valid_shell_style(const std::string& style);
 bool load_shell_transparency(const std::string& config_dir);
 void save_shell_transparency(const std::string& config_dir, bool enabled);
 
+// Docked DevTools side: "bottom" (default), "left" or "right".
+std::string load_shell_devtools_dock(const std::string& config_dir);
+void save_shell_devtools_dock(const std::string& config_dir, const std::string& dock);
+bool is_valid_shell_devtools_dock(const std::string& dock);
+
 }

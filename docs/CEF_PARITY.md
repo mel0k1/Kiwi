@@ -32,7 +32,8 @@ Mustela view library on Windows anymore.
 | Hyperlink auditing off | engine hardening | `PING` method cancelled | done |
 | DoH | engine hook | Chromium `DnsOverHttps` feature params (secure mode, custom template) | experimental |
 | Autoplay block | engine hardening | `autoplay-policy=user-gesture-required` | done |
-| Tabs | GTK notebook, favicons, drag-reorder | custom-drawn chrome: caption-row tab chips (classic) or vertical rail (Zen) with favicons, loading spinner, private badge, per-tab close, strip context menu, middle-click close, drag-reorder with sliding chips, scrollable strip/rail (wheel forwarding + draggable thumb, active tab auto-reveal) | good |
+| Tabs | GTK notebook, favicons, drag-reorder | custom-drawn chrome: caption-row tab chips (classic) or vertical rail (Zen) with favicons, loading spinner, private badge, per-tab close, strip context menu, middle-click close, drag-reorder with sliding chips, scrollable strip/rail (wheel forwarding + draggable thumb, active tab auto-reveal), tear-off: drag past the strip (or "Move tab to new window") re-parents the tab into a fresh shell window at the drop point, dock-back on release over the strip | good |
+| Multi-window | multiple GTK windows | one `CefShell` window per browser window, shared message loop, last window closed quits; tear-off windows carry their browser alive (`SetParent` + client re-point), private context follows the browser; session.toml still mirrors the primary window only | good |
 | Toolbar | cairo MD3 icons | GDI+ vector icon set (anti-aliased back/forward/reload/star/gear/plus/close), pill omnibox with focus ring | good |
 | Window chrome | GTK headerbar | custom caption (drawn min/max/close, HTCAPTION drag, snap layouts), Win11 rounded corners + optional Mica transparency (22H2+, solid fallback) | done |
 | Popups | engine-owned tabs | `OnBeforePopup` → new Kiwi tab, opener privacy inherited | done |
@@ -43,7 +44,7 @@ Mustela view library on Windows anymore.
 | Data-clear screens | engine `ClearRequest` API + UI | no UI; Chromium keeps its own cache under `config/cef` | open |
 | Find in page | engine find controller + UI bar | `CefFindHandler` + find bar (Ctrl+F, F3/Shift+F3, Esc, "n of m" counter per tab) | done |
 | Context menu | engine `ContextMenuInfo` + MD3 menu | `CefContextMenuHandler` custom menu (navigation, link/image actions, clipboard, edit commands, search selection, view source, inspect) + tab strip menu | done |
-| Devtools | engine inspector + Ctrl+Shift+I | docked: Ctrl+Shift+I opens a child DevTools browser at the bottom of the window (Alloy `SetAsChild` + `DevToolsClient` lifespan hook) behind a draggable splitter; split height persists, one instance, follows its tab | done |
+| Devtools | engine inspector + Ctrl+Shift+I | docked: Ctrl+Shift+I opens a child DevTools browser docked to the bottom, left or right edge (Alloy `SetAsChild` + `DevToolsClient` lifespan hook) behind a draggable splitter; side picked via right-click on the splitter, persisted in `style.toml` (`devtools_dock`); split size persists, one instance, follows its tab | done |
 | MHTML save | engine `save_mhtml` | not available (Chromium has no public MHTML API) | dropped |
 | Web notifications | engine permission flow → `GNotification` | not implemented | open |
 | Bookmarks manager UI | K3 screen | manager window over the shared store (Ctrl+Shift+O, star button) | done |
