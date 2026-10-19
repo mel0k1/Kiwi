@@ -127,6 +127,20 @@ void runtime_init() {
     rt->site_rules->load();
     rt->site_rules_path = sites_path;
 
+    // Kiwi Shields: per-site config from <config>/shields.toml plus the
+    // vendored domain blocklist that ships next to kiwi.exe (POST_BUILD copy
+    // from assets/shields/blocklist.txt). A missing list file is fine — the
+    // mustela tracker blocklist stays the fallback network filter.
+    rt->shields_cfg = shields::load_shields(rt->config_dir);
+#ifdef _WIN32
+    wchar_t exe_wide[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, exe_wide, MAX_PATH) > 0) {
+        std::filesystem::path exe(exe_wide);
+        rt->shields_rules.load_file(
+            (exe.parent_path() / "shields-blocklist.txt").string());
+    }
+#endif
+
     g_runtime = rt;
 }
 

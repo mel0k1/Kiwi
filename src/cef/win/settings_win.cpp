@@ -11,10 +11,13 @@
 #include "cef_shell_win.hpp"
 #include "clear_data_win.hpp"
 #include "search_engines_win.hpp"
+#include "../../shields_store.hpp"
 #include "../../style_store.hpp"
 #include "history_win.hpp"
+#include "shields_win.hpp"
 #include "site_rules_win.hpp"
 #include "updater_win.hpp"
+#include "workspaces_win.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -64,6 +67,11 @@ enum {
     ID_START_PRIVATE,
     ID_SESSION,
     ID_HISTORY_SAVE,
+    ID_WORKSPACES,
+    ID_SHIELDS,
+    ID_SHIELDS_COSMETIC,
+    ID_SHIELD_EXC,
+    ID_SHIELDS_SIZE,
     ID_ENGINES,
     ID_SITERULES,
     ID_HISTORY,
@@ -288,6 +296,13 @@ void load_into_controls(SettingsState* st) {
     set_checkbox(st->hwnd, ID_START_PRIVATE, s.start_in_private);
     set_checkbox(st->hwnd, ID_SESSION, s.session_restore);
     set_checkbox(st->hwnd, ID_HISTORY_SAVE, s.history_enabled);
+    set_checkbox(st->hwnd, ID_SHIELDS, rt->shields_cfg.enabled);
+    set_checkbox(st->hwnd, ID_SHIELDS_COSMETIC, rt->shields_cfg.cosmetic);
+    {
+        std::wstring text = L"Blocklist: "
+            + std::to_wstring(rt->shields_rules.size()) + L" domains";
+        SetWindowTextW(GetDlgItem(st->hwnd, ID_SHIELDS_SIZE), text.c_str());
+    }
 }
 
 // Reads every control and persists both stores. Style-affecting changes fire
@@ -322,6 +337,11 @@ void apply_all(SettingsState* st) {
     s.history_enabled = checkbox_value(st->hwnd, ID_HISTORY_SAVE) != 0;
 
     mustela::save_settings(rt->settings_path, s);
+
+    rt->shields_cfg.enabled = checkbox_value(st->hwnd, ID_SHIELDS) != 0;
+    rt->shields_cfg.cosmetic = checkbox_value(st->hwnd, ID_SHIELDS_COSMETIC) != 0;
+    shields::save_shields(rt->config_dir, rt->shields_cfg);
+
     rt->policy = mustela::privacy_from(s);
     rt->policy.private_tabs_available = s.private_tabs_enabled;
     rt->blocklist = mustela::default_blocklist(
@@ -399,6 +419,8 @@ void layout_page(SettingsState* st, const PageSpace& page) {
             place(GetDlgItem(st->hwnd, ID_PRIVATE), page.x0, y, page.w, check_h);
             y += MulDiv(24, dpi, 96);
             place(GetDlgItem(st->hwnd, ID_START_PRIVATE), page.x0, y, page.w, check_h);
+            y += MulDiv(24, dpi, 96);
+            place(GetDlgItem(st->hwnd, ID_WORKSPACES), page.x0, y, half, btn_h);
             y += row;
             break;
         }
@@ -444,6 +466,16 @@ void layout_page(SettingsState* st, const PageSpace& page) {
             break;
         }
         case SECTION_PRIVACY: {
+            // Kiwi Shields: the Brave-style blocking surface lives at the
+            // top of the privacy page.
+            place(GetDlgItem(st->hwnd, ID_SHIELDS), page.x0, y, page.w, check_h);
+            y += MulDiv(24, dpi, 96);
+            place(GetDlgItem(st->hwnd, ID_SHIELDS_COSMETIC), page.x0, y, page.w, check_h);
+            y += MulDiv(24, dpi, 96);
+            place(GetDlgItem(st->hwnd, ID_SHIELD_EXC), page.x0, y, half, btn_h);
+            place(GetDlgItem(st->hwnd, ID_SHIELDS_SIZE),
+                  page.x0 + half + MulDiv(8, dpi, 96), y + 3, half, check_h);
+            y += row + MulDiv(6, dpi, 96);
             place(GetDlgItem(st->hwnd, ID_COOKIES_LABEL), page.x0, y + 3, label_w, check_h);
             place(GetDlgItem(st->hwnd, ID_COOKIES), page.x0 + label_w, y,
                   MulDiv(220, dpi, 96), combo_drop);
@@ -774,6 +806,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                 case ID_START_PRIVATE:
                 case ID_SESSION:
                 case ID_HISTORY_SAVE:
+                case ID_SHIELDS:
+                case ID_SHIELDS_COSMETIC:
                     if (code == BN_CLICKED) apply_all(st);
                     return 0;
                 case ID_HOMEPAGE:
@@ -812,6 +846,12 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
                     return 0;
                 case ID_ENGINES:
                     open_search_engines_window(st->hwnd);
+                    return 0;
+                case ID_WORKSPACES:
+                    open_workspaces_window(st->hwnd);
+                    return 0;
+                case ID_SHIELD_EXC:
+                    open_shields_window(st->hwnd);
                     return 0;
                 case ID_SITERULES:
                     open_site_rules_dialog(st->hwnd);
@@ -948,6 +988,8 @@ void open_settings_window(HWND owner, std::function<void()> on_style_changed) {
         L"Private tabs available (Ctrl+Shift+P)", BS_AUTOCHECKBOX | BS_TEXT);
     add_item(st, ID_START_PRIVATE, SECTION_GENERAL, L"BUTTON",
         L"Start in private mode", BS_AUTOCHECKBOX | BS_TEXT);
+    add_item(st, ID_WORKSPACES, SECTION_GENERAL, L"BUTTON", L"Workspaces...",
+             BS_PUSHBUTTON);
 
     // Appearance
     add_label(st, ID_STYLE_LABEL, SECTION_APPEARANCE, L"Shell style", st->font);
@@ -977,6 +1019,13 @@ void open_settings_window(HWND owner, std::function<void()> on_style_changed) {
              BS_PUSHBUTTON);
 
     // Privacy
+    add_item(st, ID_SHIELDS, SECTION_PRIVACY, L"BUTTON",
+        L"Block ads and trackers (Shields)", BS_AUTOCHECKBOX | BS_TEXT);
+    add_item(st, ID_SHIELDS_COSMETIC, SECTION_PRIVACY, L"BUTTON",
+        L"Hide ad placeholders on pages", BS_AUTOCHECKBOX | BS_TEXT);
+    add_item(st, ID_SHIELD_EXC, SECTION_PRIVACY, L"BUTTON",
+        L"Shield exceptions...", BS_PUSHBUTTON);
+    add_item(st, ID_SHIELDS_SIZE, SECTION_PRIVACY, L"STATIC", L"Blocklist", 0);
     add_label(st, ID_COOKIES_LABEL, SECTION_PRIVACY, L"Cookie policy", st->font);
     add_item(st, ID_COOKIES, SECTION_PRIVACY, L"COMBOBOX", nullptr,
              CBS_DROPDOWNLIST);

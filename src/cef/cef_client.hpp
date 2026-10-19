@@ -106,6 +106,9 @@ public:
                               bool is_loading,
                               bool can_go_back,
                               bool can_go_forward) override;
+    void OnLoadStart(CefRefPtr<CefBrowser> browser,
+                     CefRefPtr<CefFrame> frame,
+                     cef_transition_type_t transition_type) override;
     void OnLoadEnd(CefRefPtr<CefBrowser> browser,
                    CefRefPtr<CefFrame> frame,
                    int httpStatusCode) override;
@@ -180,9 +183,20 @@ public:
 private:
     bool cookie_allowed(CefRefPtr<CefRequest> request, const CefCookie& cookie) const;
 
+    // Effective page host for the Shields decision on |request|: cached at
+    // OnLoadStart, with the request host itself as the fallback for the
+    // main-frame navigation that has not committed yet.
+    std::string shields_page_host(CefRefPtr<CefFrame> frame,
+                                  const std::string& request_host) const;
+
     TabHost* host_;
     bool private_tab_;
     int browser_id_ = 0;
+
+    // Kiwi Shields per-tab state: the committed page host and how many
+    // network hits Shields cancelled on it (shown on the omnibox shield).
+    std::string page_host_;
+    int blocked_page_ = 0;
 
     IMPLEMENT_REFCOUNTING(KiwiClient);
     DISALLOW_COPY_AND_ASSIGN(KiwiClient);

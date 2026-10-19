@@ -7,12 +7,16 @@
 #include "session.hpp"
 #include "../../start_page.hpp"
 #include "../../style_store.hpp"
+#include "../../shields_store.hpp"
+#include "../../workspaces_store.hpp"
 #include "bookmarks_win.hpp"
 #include "favicon_store.hpp"
 #include "gfx_win.hpp"
 #include "history_win.hpp"
 #include "settings_win.hpp"
+#include "shields_win.hpp"
 #include "site_rules_win.hpp"
+#include "workspaces_win.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -34,6 +38,7 @@
 #include <cstdint>
 #include <ctime>
 #include <cwchar>
+#include <map>
 #include <string>
 #include <thread>
 #include <vector>
@@ -51,6 +56,16 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"KiwiCefShell";
 
 constexpr UINT WM_APP_SELF_TEST = WM_APP + 55;
+// workspaces_win.cpp pokes every shell window through sync_workspaces()
+// after the manager edits the workspace list.
+constexpr UINT WM_APP_SYNC_WS = WM_APP + 56;
+// Shield popover commands (TrackPopupMenu over the omnibox button).
+constexpr int kShldToggle = 1;
+constexpr int kShldPage = 2;
+constexpr int kShldTotal = 3;
+constexpr int kShldGlobal = 4;
+constexpr int kShldCosmetic = 5;
+constexpr int kShldExceptions = 6;
 constexpr unsigned kSelfTestWaitMs = 15000;
 constexpr int kSpinTimer = 3;
 int g_self_test_exit = 2;
@@ -76,7 +91,10 @@ enum ContextMenuId {
     TABCTX_DUPLICATE,
     TABCTX_DETACH,
     TABCTX_CLOSE,
-    TABCTX_CLOSE_OTHERS
+    TABCTX_CLOSE_OTHERS,
+    // "Move to workspace" submenu items: TABCTX_WS_BASE + index into the
+    // shell's workspace list (guarded by kMaxWorkspaces).
+    TABCTX_WS_BASE = 100
 };
 
 enum DevToolsDock {
@@ -98,6 +116,12 @@ struct WinTab {
     std::string favicon_host;
     bool loading = false;
     CefRefPtr<CefBrowser> browser;
+
+    // Opera-style workspaces: every tab belongs to exactly one workspace;
+    // the strip/rail shows only the active workspace's tabs.
+    int workspace = 1;
+    // Kiwi Shields: network hits cancelled on the committed page.
+    int shield_count = 0;
 
     std::wstring find_text;
     int find_id = 0;
@@ -261,6 +285,7 @@ private:
     void draw_omnibox(HDC dc);
     void draw_tabs(HDC dc);
     void draw_tab(HDC dc, int index, const RECT& chip);
+    void draw_ws_chips(HDC dc);
     void draw_rail(HDC dc);
     void draw_devtools_split(HDC dc);
     void draw_status(HDC dc);
@@ -305,7 +330,24 @@ private:
     void save_session_now();
     bool restore_session();
 
-    int add_tab(const std::string& url, bool private_tab);
+    // ---- Opera-style workspaces ---------------------------------------
+    void load_workspaces_state();
+    std::vector<int> ws_tabs() const;      // global indices of the active ws
+    int ws_tab_count() const;
+    int slot_of_tab(int global_index) const;
+    int ws_index_of(int ws_id) const;
+    int ws_at(const POINT& cl) const;      // pill/chip index, -1 outside
+    bool ws_add_hit(const POINT& cl) const;
+    void switch_workspace(int ws_id);
+    void move_tab_to_workspace(int global_index, int ws_id);
+    void reload_workspaces_state();
+
+    // ---- Kiwi Shields --------------------------------------------------
+    void open_shields_menu(const POINT& screen);
+    int shields_session_total() const;
+    void on_shields(int browser_id, int blocked) override;
+
+    int add_tab(const std::string& url, bool private_tab, int workspace = 0);
     void activate_index(int index);
     void start_self_test_watchdog();
     void close_index(int index);
@@ -374,6 +416,7 @@ private:
         RECT devtools = {};
         RECT devtools_bar = {};
         RECT devtools_base = {};
+        RECT shield_btn = {};  // inside the omnibox pill (Kiwi Shields)
     } lay_;
 
     int find_seq_ = 0;
@@ -383,8 +426,22 @@ private:
     std::string style_;
     std::string backdrop_;   // "off", "mica" or "acrylic" (style.toml)
     std::string rail_side_;  // "left" or "right" (style.toml)
+
+    // Opera-style workspaces: defs from <config>/workspaces.toml, the active
+    // one and the per-workspace memory of the last active tab (browser id).
+    std::vector<WorkspaceDef> workspaces_;
+    int active_ws_ = 1;
+    std::map<int, int> ws_active_tab_;
+    std::vector<RECT> ws_pills_;  // zen rail pill rects, index = ws list index
+    RECT ws_add_pill_ = {};       // zen: the "add workspace" pill
+    std::vector<RECT> ws_chips_;  // classic strip glyph chips
+    int hover_ws_ = -1;
+
     bool star_active_ = false;
     std::string status_text_;
+
+    bool hover_shield_ = false;
+    bool press_shield_ = false;
 
     int spin_phase_ = 0;
     int hover_tab_ = -1;
@@ -559,6 +616,7 @@ bool CefShell::create_window() {
     backdrop_ = kiwi::load_shell_backdrop(rt ? rt->config_dir : std::string());
     rail_side_ = kiwi::load_shell_rail_side(rt ? rt->config_dir : std::string());
     std::string dock = kiwi::load_shell_devtools_dock(rt ? rt->config_dir : std::string());
+    load_workspaces_state();
     devtools_dock_ = dock == "left" ? DOCK_LEFT
                    : dock == "right" ? DOCK_RIGHT : DOCK_BOTTOM;
     gfx::init();
@@ -790,14 +848,17 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             int tab = self->tab_at(cl);
             bool close = false;
             if (tab >= 0) {
-                RECT chip = self->tab_chip_rect(tab, self->tab_width_for(
-                    static_cast<int>(self->tabs_.size())));
+                int slot = self->slot_of_tab(tab);
+                RECT chip = self->tab_chip_rect(slot, self->tab_width_for(
+                    self->ws_tab_count()));
                 RECT crect = self->tab_close_rect(chip);
                 close = PtInRect(&crect, cl) != FALSE;
             }
             int tool = self->tool_at(cl);
             const RECT& add = self->lay_.add_btn;
             bool add_hover = PtInRect(&add, cl) != FALSE;
+            bool shield_hover = PtInRect(&self->lay_.shield_btn, cl) != FALSE;
+            int ws_hover = self->ws_at(cl);
             bool grip_hover = false;
             if (self->lay_.zen) {
                 RECT grip = self->rail_grip_rect();
@@ -805,11 +866,15 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             }
             if (tab != self->hover_tab_ || close != self->hover_close_
                 || tool != self->hover_tool_ || add_hover != self->hover_add_
+                || shield_hover != self->hover_shield_
+                || ws_hover != self->hover_ws_
                 || grip_hover != self->hover_rail_grip_) {
                 self->hover_tab_ = tab;
                 self->hover_close_ = close;
                 self->hover_tool_ = tool;
                 self->hover_add_ = add_hover;
+                self->hover_shield_ = shield_hover;
+                self->hover_ws_ = ws_hover;
                 self->hover_rail_grip_ = grip_hover;
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
@@ -817,12 +882,15 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
         }
         case WM_MOUSELEAVE:
             if (self->hover_tab_ != -1 || self->hover_close_ || self->hover_tool_ != -1
-                || self->hover_add_ || self->hover_rail_grip_) {
+                || self->hover_add_ || self->hover_rail_grip_
+                || self->hover_shield_ || self->hover_ws_ != -1) {
                 self->hover_tab_ = -1;
                 self->hover_close_ = false;
                 self->hover_tool_ = -1;
                 self->hover_add_ = false;
                 self->hover_rail_grip_ = false;
+                self->hover_shield_ = false;
+                self->hover_ws_ = -1;
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
             return 0;
@@ -917,10 +985,28 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                     return 0;
                 }
             }
+            // Workspace pills/chips switch on press; the "+" pill and a
+            // right-click open the manager.
+            int ws = self->ws_at(cl);
+            if (ws >= 0) {
+                if (ws < static_cast<int>(self->workspaces_.size())) {
+                    self->switch_workspace(self->workspaces_[static_cast<size_t>(ws)].id);
+                } else {
+                    self->open_workspaces_window(self->hwnd_);
+                }
+                return 0;
+            }
+            if (PtInRect(&self->lay_.shield_btn, cl)) {
+                self->press_shield_ = true;
+                SetCapture(hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             int tab = self->tab_at(cl);
             if (tab >= 0) {
-                RECT chip = self->tab_chip_rect(tab, self->tab_width_for(
-                    static_cast<int>(self->tabs_.size())));
+                int slot = self->slot_of_tab(tab);
+                RECT chip = self->tab_chip_rect(slot, self->tab_width_for(
+                    self->ws_tab_count()));
                 RECT crect = self->tab_close_rect(chip);
                 if (PtInRect(&crect, cl)) {
                     self->press_close_tab_ = tab;
@@ -987,6 +1073,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             const int close_tab = self->press_close_tab_;
             const bool add_press = self->press_add_;
             const int tool = self->press_tool_;
+            const bool shield_press = self->press_shield_;
             if (GetCapture() == hwnd) ReleaseCapture();
             self->drag_split_ = false;
             self->drag_thumb_ = false;
@@ -999,6 +1086,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             self->press_close_tab_ = -1;
             self->press_add_ = false;
             self->press_tool_ = -1;
+            self->press_shield_ = false;
             if (had_split) return 0;
             if (had_thumb) return 0;
             if (had_rail) return 0;
@@ -1015,14 +1103,16 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 return 0;
             }
             if (close_tab >= 0) {
-                RECT chip = self->tab_chip_rect(close_tab, self->tab_width_for(
-                    static_cast<int>(self->tabs_.size())));
-                RECT crect = self->tab_close_rect(chip);
-                if (close_tab < static_cast<int>(self->tabs_.size())
-                    && cl.x >= chip.left && cl.x <= chip.right
-                    && cl.y >= chip.top && cl.y <= chip.bottom
-                    && PtInRect(&crect, cl)) {
-                    self->close_index(close_tab);
+                int cslot = self->slot_of_tab(close_tab);
+                if (cslot >= 0) {
+                    RECT chip = self->tab_chip_rect(cslot, self->tab_width_for(
+                        self->ws_tab_count()));
+                    RECT crect = self->tab_close_rect(chip);
+                    if (cl.x >= chip.left && cl.x <= chip.right
+                        && cl.y >= chip.top && cl.y <= chip.bottom
+                        && PtInRect(&crect, cl)) {
+                        self->close_index(close_tab);
+                    }
                 }
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
@@ -1057,12 +1147,22 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
+            if (shield_press) {
+                if (PtInRect(&self->lay_.shield_btn, cl)) {
+                    POINT screen = cl;
+                    ClientToScreen(hwnd, &screen);
+                    self->open_shields_menu(screen);
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             break;
         }
         case WM_CAPTURECHANGED:
             self->press_close_tab_ = -1;
             self->press_tool_ = -1;
             self->press_add_ = false;
+            self->press_shield_ = false;
             self->drag_tab_ = -1;
             self->drag_active_ = false;
             self->drag_tear_ = false;
@@ -1085,6 +1185,10 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
             ClientToScreen(hwnd, &screen);
             if (self->devtools_bar_hit(cl)) {
                 self->open_devtools_dock_menu(screen);
+                return 0;
+            }
+            if (self->ws_at(cl) >= 0 || self->ws_add_hit(cl)) {
+                self->open_workspaces_window(self->hwnd_);
                 return 0;
             }
             int tab = self->tab_at(cl);
@@ -1154,6 +1258,9 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 if (tab.browser) tab.browser->GetHost()->CloseBrowser(false);
             }
             if (self->tabs_.empty()) DestroyWindow(hwnd);
+            return 0;
+        case WM_APP_SYNC_WS:
+            self->reload_workspaces_state();
             return 0;
         case WM_APP_SELF_TEST:
             g_self_test_exit = self->active_browser() ? 0 : 2;
@@ -1311,17 +1418,42 @@ void CefShell::layout() {
         } else {
             lay_.rail = {0, top, rail_w, h - status_h};
         }
-        int add = MulDiv(34, dpi, 96);
-        int add_left = lay_.rail.left + MulDiv(8, dpi, 96);
-        lay_.add_btn = {add_left, top + MulDiv(6, dpi, 96), add_left + add,
-                        top + MulDiv(6, dpi, 96) + add};
+        // Opera-style workspace section: one pill per workspace, then the
+        // "+" pill (opens the manager), then the new-tab button and chips.
+        ws_pills_.clear();
+        int ws_y = lay_.rail.top + MulDiv(6, dpi, 96);
+        int pill_h = MulDiv(26, dpi, 96);
+        int ws_step = MulDiv(30, dpi, 96);
+        for (const WorkspaceDef& def : workspaces_) {
+            (void)def;
+            ws_pills_.push_back({lay_.rail.left + MulDiv(6, dpi, 96), ws_y,
+                                 lay_.rail.right - MulDiv(6, dpi, 96),
+                                 ws_y + pill_h});
+            ws_y += ws_step;
+        }
+        ws_add_pill_ = {lay_.rail.left + MulDiv(6, dpi, 96), ws_y,
+                        lay_.rail.right - MulDiv(6, dpi, 96),
+                        ws_y + MulDiv(20, dpi, 96)};
+        lay_.add_btn = add_btn_rect();
         lay_.tab_area = {lay_.rail.left, lay_.add_btn.bottom + MulDiv(2, dpi, 96),
                          lay_.rail.right, h - status_h};
         int host_left = rail_right ? 0 : rail_w;
         int host_right = rail_right ? w - rail_w : w;
         lay_.host = {host_left, top, host_right, h - status_h};
     } else {
-        lay_.tab_area = {pad, 0, w - cap_zone - MulDiv(4, dpi, 96), top_h};
+        // Classic: workspace glyph chips lead the caption-row strip, then
+        // the tab chips (only the active workspace's tabs are drawn).
+        ws_chips_.clear();
+        int chip = MulDiv(22, dpi, 96);
+        int cx = pad;
+        int cy = (top_h - chip) / 2;
+        for (const WorkspaceDef& def : workspaces_) {
+            (void)def;
+            ws_chips_.push_back({cx, cy, cx + chip, cy + chip});
+            cx += chip + MulDiv(4, dpi, 96);
+        }
+        if (!ws_chips_.empty()) cx += MulDiv(4, dpi, 96);
+        lay_.tab_area = {cx, 0, w - cap_zone - MulDiv(4, dpi, 96), top_h};
         int x = pad;
         int y = top_h + (tool_h - btn) / 2;
         for (int i = 0; i < 3; ++i) {
@@ -1344,8 +1476,14 @@ void CefShell::layout() {
 
     lay_.omnibox = {lay_.omnibox_pill.left + MulDiv(12, dpi, 96),
                     lay_.omnibox_pill.top + MulDiv(3, dpi, 96),
-                    lay_.omnibox_pill.right - MulDiv(10, dpi, 96),
+                    lay_.omnibox_pill.right - MulDiv(38, dpi, 96),
                     lay_.omnibox_pill.bottom - MulDiv(3, dpi, 96)};
+    // Kiwi Shields button inside the pill's right end (Brave-style).
+    int sb = MulDiv(22, dpi, 96);
+    lay_.shield_btn = {lay_.omnibox_pill.right - MulDiv(30, dpi, 96),
+                       (lay_.omnibox_pill.top + lay_.omnibox_pill.bottom - sb) / 2,
+                       lay_.omnibox_pill.right - MulDiv(8, dpi, 96),
+                       (lay_.omnibox_pill.top + lay_.omnibox_pill.bottom + sb) / 2};
     lay_.add_btn = add_btn_rect();
 
     if (find_visible_) {
@@ -1473,7 +1611,7 @@ int CefShell::tab_width_for(int n) const {
 }
 
 int CefShell::visible_tab_count() const {
-    int n = static_cast<int>(tabs_.size());
+    int n = ws_tab_count();
     if (!n) return 0;
     if (lay_.zen) return n;
     int dpi = lay_.dpi;
@@ -1486,7 +1624,7 @@ int CefShell::visible_tab_count() const {
 }
 
 int CefShell::max_tab_scroll() const {
-    int n = static_cast<int>(tabs_.size());
+    int n = ws_tab_count();
     if (n < 2) return 0;
     int dpi = lay_.dpi;
     if (lay_.zen) {
@@ -1516,8 +1654,10 @@ void CefShell::scroll_tabs(int delta) {
 }
 
 void CefShell::ensure_tab_visible(int index) {
-    int n = static_cast<int>(tabs_.size());
-    if (index < 0 || index >= n) return;
+    int slot = slot_of_tab(index);
+    if (slot < 0) return;
+    int n = ws_tab_count();
+    (void)n;
     int maxs = max_tab_scroll();
     if (maxs <= 0) {
         tab_scroll_ = 0;
@@ -1527,7 +1667,7 @@ void CefShell::ensure_tab_visible(int index) {
     if (lay_.zen) {
         int pitch = MulDiv(38, dpi, 96);
         int height = MulDiv(34, dpi, 96);
-        int top_eff = lay_.tab_area.top + index * pitch;
+        int top_eff = lay_.tab_area.top + slot * pitch;
         if (top_eff - tab_scroll_ < lay_.tab_area.top) {
             tab_scroll_ = top_eff - lay_.tab_area.top;
         }
@@ -1536,8 +1676,8 @@ void CefShell::ensure_tab_visible(int index) {
         }
     } else {
         int gap = MulDiv(2, dpi, 96);
-        int tab_w = tab_width_for(n);
-        int left_eff = lay_.tab_area.left + index * (tab_w + gap);
+        int tab_w = tab_width_for(ws_tab_count());
+        int left_eff = lay_.tab_area.left + slot * (tab_w + gap);
         int margin = MulDiv(30, dpi, 96);
         if (left_eff - tab_scroll_ < lay_.tab_area.left) {
             tab_scroll_ = left_eff - lay_.tab_area.left;
@@ -1552,7 +1692,7 @@ void CefShell::ensure_tab_visible(int index) {
 RECT CefShell::tab_thumb_rect() const {
     int maxs = max_tab_scroll();
     if (maxs <= 0) return {};
-    int n = static_cast<int>(tabs_.size());
+    int n = ws_tab_count();
     int dpi = lay_.dpi;
     RECT area = lay_.tab_area;
     if (lay_.zen) {
@@ -1610,7 +1750,7 @@ void CefShell::flip_rail_side(const std::string& side) {
 }
 
 int CefShell::drop_slot_at(const POINT& cl) const {
-    int n = static_cast<int>(tabs_.size());
+    int n = ws_tab_count();
     if (n < 2) return 0;
     int dpi = lay_.dpi;
     if (lay_.zen) {
@@ -1631,8 +1771,10 @@ int CefShell::drop_slot_at(const POINT& cl) const {
 }
 
 RECT CefShell::drag_ghost_rect() const {
-    int n = static_cast<int>(tabs_.size());
-    RECT chip = tab_chip_rect(drag_tab_, tab_width_for(n));
+    int n = ws_tab_count();
+    int dslot = slot_of_tab(drag_tab_);
+    if (dslot < 0) dslot = 0;
+    RECT chip = tab_chip_rect(dslot, tab_width_for(n));
     if (lay_.zen) {
         int height = chip.bottom - chip.top;
         chip.top = drag_pos_.y - grab_dy_;
@@ -1640,7 +1782,7 @@ RECT CefShell::drag_ghost_rect() const {
         return chip;
     }
     int width = chip.right - chip.left;
-    int slot = drop_slot_ >= 0 && drop_slot_ < n ? drop_slot_ : drag_tab_;
+    int slot = drop_slot_ >= 0 && drop_slot_ < n ? drop_slot_ : dslot;
     RECT row = tab_chip_rect(slot, tab_width_for(n));
     chip.left = drag_pos_.x - grab_dx_;
     chip.right = chip.left + width;
@@ -1650,18 +1792,45 @@ RECT CefShell::drag_ghost_rect() const {
 }
 
 void CefShell::move_tab(int from, int to) {
-    int n = static_cast<int>(tabs_.size());
-    if (from < 0 || from >= n || to < 0 || to >= n || from == to) return;
-    WinTab tab = std::move(tabs_[static_cast<size_t>(from)]);
-    tabs_.erase(tabs_.begin() + from);
-    tabs_.insert(tabs_.begin() + to, std::move(tab));
-    if (active_ == from) {
-        active_ = to;
-    } else if (from < active_ && to >= active_) {
-        --active_;
-    } else if (from > active_ && to <= active_) {
-        ++active_;
+    // |from| is a global tab index; |to| is a visual slot inside the active
+    // workspace. The reorder happens inside the workspace subset; tabs of
+    // other workspaces keep their relative order behind it.
+    std::vector<int> list = ws_tabs();
+    int from_slot = -1;
+    for (size_t i = 0; i < list.size(); ++i) {
+        if (list[i] == from) from_slot = static_cast<int>(i);
     }
+    if (from_slot < 0) return;
+    if (to < 0) to = 0;
+    if (to >= static_cast<int>(list.size())) {
+        to = static_cast<int>(list.size()) - 1;
+    }
+    if (to == from_slot) return;
+    const int active_id = active_ >= 0
+        && active_ < static_cast<int>(tabs_.size())
+        ? tabs_[static_cast<size_t>(active_)].browser_id : 0;
+    int moving = list[static_cast<size_t>(from_slot)];
+    list.erase(list.begin() + from_slot);
+    list.insert(list.begin() + to, moving);
+    // Stable permutation: workspace members land in the new order, every
+    // other tab keeps its relative position after them.
+    std::vector<int> ranks(tabs_.size(), -1);
+    int r = 0;
+    for (int g : list) ranks[static_cast<size_t>(g)] = r++;
+    for (size_t g = 0; g < tabs_.size(); ++g) {
+        if (ranks[g] < 0) ranks[g] = r++;
+    }
+    std::vector<int> order(tabs_.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(i);
+    std::stable_sort(order.begin(), order.end(),
+        [&ranks](int a, int b) { return ranks[a] < ranks[b]; });
+    std::vector<WinTab> reordered;
+    reordered.reserve(tabs_.size());
+    for (int g : order) {
+        reordered.push_back(std::move(tabs_[static_cast<size_t>(g)]));
+    }
+    tabs_ = std::move(reordered);
+    active_ = active_id ? index_by_id(active_id) : -1;
     ensure_tab_visible(active_);
     layout();
 }
@@ -1912,9 +2081,12 @@ RECT CefShell::add_btn_rect() const {
     if (lay_.zen) {
         int add = MulDiv(34, dpi, 96);
         int left = lay_.rail.left + MulDiv(8, dpi, 96);
-        return {left, lay_.rail.top + MulDiv(6, dpi, 96), left + add,
-                lay_.rail.top + MulDiv(6, dpi, 96) + add};
+        int top = ws_add_pill_.bottom > lay_.rail.top
+            ? ws_add_pill_.bottom + MulDiv(8, dpi, 96)
+            : lay_.rail.top + MulDiv(6, dpi, 96);
+        return {left, top, left + add, top + add};
     }
+    int ws_n = ws_tab_count();
     if (max_tab_scroll() > 0) {
         int left = lay_.tab_area.right - size - MulDiv(2, dpi, 96);
         int top = (lay_.tab_area.top + lay_.tab_area.bottom - size) / 2;
@@ -1923,8 +2095,7 @@ RECT CefShell::add_btn_rect() const {
     int visible = visible_tab_count();
     int right;
     if (visible > 0) {
-        RECT last = tab_chip_rect(visible - 1, tab_width_for(
-            static_cast<int>(tabs_.size())));
+        RECT last = tab_chip_rect(visible - 1, tab_width_for(ws_n));
         right = last.right + MulDiv(3, dpi, 96);
     } else {
         right = lay_.tab_area.left + MulDiv(3, dpi, 96);
@@ -1936,7 +2107,8 @@ RECT CefShell::add_btn_rect() const {
 }
 
 int CefShell::tab_at(const POINT& cl) const {
-    int n = static_cast<int>(tabs_.size());
+    std::vector<int> list = ws_tabs();
+    int n = static_cast<int>(list.size());
     if (!n) return -1;
     int dpi = lay_.dpi;
     if (cl.x < lay_.tab_area.left || cl.x > lay_.tab_area.right
@@ -1950,7 +2122,7 @@ int CefShell::tab_at(const POINT& cl) const {
         if (idx < 0 || idx >= n) return -1;
         int chip_top = lay_.tab_area.top + idx * pitch - tab_scroll_;
         if (cl.y > chip_top + height) return -1;
-        return idx;
+        return list[static_cast<size_t>(idx)];
     }
     int gap = MulDiv(2, dpi, 96);
     int tab_w = tab_width_for(n);
@@ -1959,7 +2131,7 @@ int CefShell::tab_at(const POINT& cl) const {
     if (idx < 0 || idx >= n) return -1;
     int x0 = lay_.tab_area.left + idx * pitch - tab_scroll_;
     if (cl.x > x0 + tab_w) return -1;
-    return idx;
+    return list[static_cast<size_t>(idx)];
 }
 
 int CefShell::tool_at(const POINT& cl) const {
@@ -1976,6 +2148,7 @@ bool CefShell::chrome_is_drag_zone(const POINT& cl) const {
     if (PtInRect(&lay_.host, cl)) return false;
     if (PtInRect(&lay_.omnibox_pill, cl)) return false;
     if (PtInRect(&lay_.add_btn, cl)) return false;
+    if (ws_at(cl) >= 0 || ws_add_hit(cl)) return false;
     for (int i = 0; i < 5; ++i) {
         if (PtInRect(&lay_.tool_btns[i], cl)) return false;
     }
@@ -2062,6 +2235,68 @@ void CefShell::draw_rail(HDC dc) {
                 lay_.rail.right, lay_.rail.bottom};
     }
     fill_rect_color(dc, line, pal.outline);
+
+    // Opera-style workspace pills: the first section of the rail. The
+    // active one carries the accent wash; click switches, the "+" pill
+    // below opens the workspace manager.
+    int pill_index = 0;
+    for (const WorkspaceDef& def : workspaces_) {
+        if (pill_index >= static_cast<int>(ws_pills_.size())) break;
+        RECT pill = ws_pills_[static_cast<size_t>(pill_index)];
+        const bool active = def.id == active_ws_;
+        const bool hot = hover_ws_ == pill_index;
+        if (active) {
+            COLORREF wash = gfx::blend(pal.active_tab_bg, pal.accent, 22);
+            fill_round_rect(dc, pill, 8, lay_.dpi, wash);
+            stroke_round_rect(dc, pill, 8, lay_.dpi,
+                gfx::blend(pal.active_tab_bg, pal.accent, 110), 1.0f);
+        } else if (hot) {
+            fill_round_rect(dc, pill, 8, lay_.dpi, pal.hover_chip);
+        }
+        RECT glyph_box = {pill.left + MulDiv(8, lay_.dpi, 96),
+                          (pill.top + pill.bottom) / 2 - MulDiv(8, lay_.dpi, 96),
+                          pill.left + MulDiv(24, lay_.dpi, 96),
+                          (pill.top + pill.bottom) / 2 + MulDiv(8, lay_.dpi, 96)};
+        gfx::Glyph glyph = gfx::Glyph::Globe;
+        gfx::glyph_from_name(def.glyph, &glyph);
+        gfx::draw_glyph(dc, glyph_box, glyph,
+            active ? pal.accent : (hot ? pal.chrome_text : pal.chrome_muted),
+            1.4f, lay_.dpi);
+        RECT text = {glyph_box.right + MulDiv(6, lay_.dpi, 96), pill.top,
+                     pill.right, pill.bottom};
+        SetBkMode(dc, TRANSPARENT);
+        SelectObject(dc, font_);
+        SetTextColor(dc, active ? pal.chrome_text : pal.chrome_muted);
+        std::wstring name = wide_from_utf8(def.name);
+        DrawTextW(dc, name.c_str(), -1, &text,
+            DT_END_ELLIPSIS | DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        ++pill_index;
+    }
+    if (!IsRectEmpty(&ws_add_pill_)) {
+        const bool hot = hover_ws_ == static_cast<int>(workspaces_.size());
+        if (hot) fill_round_rect(dc, ws_add_pill_, 8, lay_.dpi, pal.hover_chip);
+        RECT glyph_box = {ws_add_pill_.left + MulDiv(8, lay_.dpi, 96),
+                          (ws_add_pill_.top + ws_add_pill_.bottom) / 2
+                              - MulDiv(7, lay_.dpi, 96),
+                          ws_add_pill_.left + MulDiv(22, lay_.dpi, 96),
+                          (ws_add_pill_.top + ws_add_pill_.bottom) / 2
+                              + MulDiv(7, lay_.dpi, 96)};
+        gfx::draw_glyph(dc, glyph_box, gfx::Glyph::Plus,
+            hot ? pal.chrome_text : pal.chrome_muted, 1.4f, lay_.dpi);
+        RECT text = {glyph_box.right + MulDiv(6, lay_.dpi, 96), ws_add_pill_.top,
+                     ws_add_pill_.right, ws_add_pill_.bottom};
+        SetBkMode(dc, TRANSPARENT);
+        SelectObject(dc, font_);
+        SetTextColor(dc, hot ? pal.chrome_text : pal.chrome_muted);
+        DrawTextW(dc, L"Add workspace", -1, &text,
+            DT_END_ELLIPSIS | DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        RECT sep = {lay_.rail.left + MulDiv(8, lay_.dpi, 96),
+                    ws_add_pill_.bottom + MulDiv(4, lay_.dpi, 96),
+                    lay_.rail.right - MulDiv(8, lay_.dpi, 96),
+                    ws_add_pill_.bottom + MulDiv(5, lay_.dpi, 96)};
+        fill_rect_color(dc, sep, pal.separator);
+    }
+
     // Drag affordance: a small pill centered on the host-facing edge. It
     // grabs the rail (SIZEWE cursor) and flips the rail side on a horizontal
     // drag; it brightens into the accent while hovered or dragged.
@@ -2089,31 +2324,50 @@ void CefShell::draw_devtools_split(HDC dc) {
 }
 
 void CefShell::draw_tabs(HDC dc) {
-    int n = static_cast<int>(tabs_.size());
-    if (!n) return;
+    if (!lay_.zen) draw_ws_chips(dc);
+    std::vector<int> list = ws_tabs();
+    int n = static_cast<int>(list.size());
     draw_add_button(dc, lay_.add_btn);
-    bool reorder_drag = drag_active_ && !drag_tear_ && drag_tab_ >= 0 && drag_tab_ < n;
+    if (!n) {
+        // Empty workspace: a quiet hint under the add button (zen only —
+        // the classic strip is too small for one).
+        if (lay_.zen && drag_tab_ < 0) {
+            const gfx::Palette& pal = gfx::palette();
+            RECT hint = {lay_.tab_area.left + MulDiv(12, lay_.dpi, 96),
+                         lay_.tab_area.top + MulDiv(6, lay_.dpi, 96),
+                         lay_.tab_area.right,
+                         lay_.tab_area.top + MulDiv(44, lay_.dpi, 96)};
+            SetBkMode(dc, TRANSPARENT);
+            SelectObject(dc, font_);
+            SetTextColor(dc, pal.chrome_muted);
+            DrawTextW(dc, L"No tabs in this workspace", -1, &hint,
+                DT_END_ELLIPSIS | DT_SINGLELINE | DT_LEFT | DT_VCENTER);
+        }
+        return;
+    }
+    bool reorder_drag = drag_active_ && !drag_tear_ && slot_of_tab(drag_tab_) >= 0;
+    int drag_slot = reorder_drag ? slot_of_tab(drag_tab_) : -1;
     std::vector<int> order(static_cast<size_t>(n));
-    for (int i = 0; i < n; ++i) order[static_cast<size_t>(i)] = i;
+    for (int s = 0; s < n; ++s) order[static_cast<size_t>(s)] = s;
     if (reorder_drag) {
-        order.erase(order.begin() + drag_tab_);
+        order.erase(order.begin() + drag_slot);
         int slot = drop_slot_ >= 0 && drop_slot_ < n ? drop_slot_ : n - 1;
-        order.insert(order.begin() + slot, drag_tab_);
+        order.insert(order.begin() + slot, drag_slot);
     }
     int saved = SaveDC(dc);
     IntersectClipRect(dc, lay_.tab_area.left, lay_.tab_area.top,
         lay_.tab_area.right, lay_.tab_area.bottom);
     int tab_w = tab_width_for(n);
     for (int slot = 0; slot < n; ++slot) {
-        int idx = order[static_cast<size_t>(slot)];
-        if (reorder_drag && idx == drag_tab_) continue;
-        draw_tab(dc, idx, tab_chip_rect(slot, tab_w));
+        int s = order[static_cast<size_t>(slot)];
+        if (reorder_drag && s == drag_slot) continue;
+        draw_tab(dc, list[static_cast<size_t>(s)], tab_chip_rect(s, tab_w));
     }
     if (reorder_drag) {
         draw_tab(dc, drag_tab_, drag_ghost_rect());
     }
     RestoreDC(dc, saved);
-    if (drag_tear_ && drag_tab_ >= 0 && drag_tab_ < n) {
+    if (drag_tear_ && drag_tab_ >= 0 && drag_tab_ < static_cast<int>(tabs_.size())) {
         RECT ghost = tear_ghost_rect();
         draw_tab(dc, drag_tab_, ghost);
         stroke_round_rect(dc, ghost, 8, lay_.dpi, gfx::palette().omnibox_focus, 1.0f);
@@ -2121,6 +2375,31 @@ void CefShell::draw_tabs(HDC dc) {
     RECT thumb = tab_thumb_rect();
     if (!IsRectEmpty(&thumb)) {
         fill_round_rect(dc, thumb, 2, lay_.dpi, gfx::palette().chrome_muted);
+    }
+}
+
+void CefShell::draw_ws_chips(HDC dc) {
+    const gfx::Palette& pal = gfx::palette();
+    int dpi = lay_.dpi;
+    for (size_t i = 0; i < workspaces_.size() && i < ws_chips_.size(); ++i) {
+        const WorkspaceDef& def = workspaces_[i];
+        const RECT& chip = ws_chips_[i];
+        const bool active = def.id == active_ws_;
+        const bool hot = hover_ws_ == static_cast<int>(i);
+        if (active || hot) {
+            fill_round_rect(dc, chip, 6, dpi,
+                active ? gfx::blend(pal.active_tab_bg, pal.accent, 22)
+                       : pal.hover_chip);
+        }
+        RECT glyph_box = {chip.left + MulDiv(4, dpi, 96),
+                          chip.top + MulDiv(4, dpi, 96),
+                          chip.right - MulDiv(4, dpi, 96),
+                          chip.bottom - MulDiv(4, dpi, 96)};
+        gfx::Glyph glyph = gfx::Glyph::Globe;
+        gfx::glyph_from_name(def.glyph, &glyph);
+        gfx::draw_glyph(dc, glyph_box, glyph,
+            active ? pal.accent : (hot ? pal.chrome_text : pal.chrome_muted),
+            1.3f, dpi);
     }
 }
 
@@ -2198,6 +2477,37 @@ void CefShell::draw_omnibox(HDC dc) {
     fill_round_rect(dc, lay_.omnibox_pill, MulDiv(15, dpi, 96), dpi, pal.omnibox_bg);
     stroke_round_rect(dc, lay_.omnibox_pill, MulDiv(15, dpi, 96), dpi,
         focused ? pal.omnibox_focus : pal.omnibox_border, 1.0f);
+
+    // Kiwi Shields: the glyph turns accent while the page keeps its shields
+    // up, goes muted when the site is excepted or blocking is off, and a
+    // small counter shows this page's blocked hits (Brave-style).
+    const WinTab* tab = active_ >= 0 && active_ < static_cast<int>(tabs_.size())
+        ? &tabs_[static_cast<size_t>(active_)] : nullptr;
+    Runtime* rt = runtime();
+    std::string page = tab && !tab->url.empty() && !is_start_page_entry(tab->url)
+        ? url_host(tab->url) : std::string();
+    const bool enabled = rt && rt->shields_cfg.enabled;
+    const bool down = enabled && !page.empty()
+        && shields::shields_site_mode(rt->shields_cfg, page) == "down";
+    if (press_shield_ || hover_shield_) {
+        fill_round_rect(dc, lay_.shield_btn, MulDiv(11, dpi, 96), dpi,
+            press_shield_ ? pal.pressed_chip : pal.hover_chip);
+    }
+    gfx::draw_glyph(dc, lay_.shield_btn, gfx::Glyph::Shield,
+        down || !enabled ? pal.chrome_muted : pal.accent, 1.5f, dpi);
+    const int count = tab ? tab->shield_count : 0;
+    if (enabled && !down && count > 0) {
+        RECT label = {lay_.shield_btn.left - MulDiv(46, dpi, 96),
+                      lay_.shield_btn.top - MulDiv(2, dpi, 96),
+                      lay_.shield_btn.left - MulDiv(4, dpi, 96),
+                      lay_.shield_btn.bottom + MulDiv(2, dpi, 96)};
+        SetBkMode(dc, TRANSPARENT);
+        SelectObject(dc, font_);
+        SetTextColor(dc, pal.chrome_muted);
+        std::wstring text = std::to_wstring(count);
+        DrawTextW(dc, text.c_str(), -1, &label,
+            DT_END_ELLIPSIS | DT_SINGLELINE | DT_RIGHT | DT_VCENTER);
+    }
 }
 
 void CefShell::draw_tool_buttons(HDC dc, bool direct) {
@@ -2322,6 +2632,18 @@ void CefShell::open_tab_context_menu(int index, const POINT& screen) {
         AppendMenuW(menu, MF_STRING, TABCTX_RELOAD, L"Reload");
         AppendMenuW(menu, MF_STRING, TABCTX_DUPLICATE, L"Duplicate tab");
         AppendMenuW(menu, MF_STRING, TABCTX_DETACH, L"Move tab to new window");
+        if (workspaces_.size() > 1) {
+            HMENU ws_menu = CreatePopupMenu();
+            for (size_t i = 0; i < workspaces_.size(); ++i) {
+                const WorkspaceDef& def = workspaces_[i];
+                std::wstring label = wide_from_utf8(def.name);
+                AppendMenuW(ws_menu,
+                    MF_STRING | (def.id == tab.workspace ? MF_CHECKED : 0),
+                    TABCTX_WS_BASE + static_cast<int>(i), label.c_str());
+            }
+            AppendMenuW(menu, MF_POPUP,
+                reinterpret_cast<UINT_PTR>(ws_menu), L"Move to workspace");
+        }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, TABCTX_CLOSE, L"Close tab");
         AppendMenuW(menu, MF_STRING, TABCTX_CLOSE_OTHERS, L"Close other tabs");
@@ -2343,6 +2665,12 @@ void CefShell::open_tab_context_menu(int index, const POINT& screen) {
         return;
     }
     if (index < 0 || index >= static_cast<int>(tabs_.size())) return;
+    if (cmd >= TABCTX_WS_BASE
+        && cmd < TABCTX_WS_BASE + static_cast<int>(workspaces_.size())) {
+        move_tab_to_workspace(index,
+            workspaces_[static_cast<size_t>(cmd - TABCTX_WS_BASE)].id);
+        return;
+    }
     switch (cmd) {
         case TABCTX_RELOAD:
             if (tabs_[index].browser) tabs_[index].browser->Reload();
@@ -2350,8 +2678,9 @@ void CefShell::open_tab_context_menu(int index, const POINT& screen) {
         case TABCTX_DUPLICATE: {
             std::string url = tabs_[index].url;
             bool private_tab = tabs_[index].private_tab;
+            int ws = tabs_[index].workspace;
             if (url.empty() || is_start_page_entry(url)) break;
-            int next = add_tab(url, private_tab);
+            int next = add_tab(url, private_tab, ws);
             activate_index(next);
             break;
         }
@@ -2376,10 +2705,11 @@ std::string CefShell::start_uri(bool private_tab) {
     return uri.empty() ? std::string("https://example.org") : uri;
 }
 
-int CefShell::add_tab(const std::string& url, bool private_tab) {
+int CefShell::add_tab(const std::string& url, bool private_tab, int workspace) {
     WinTab tab;
     tab.private_tab = private_tab;
     tab.url = url;
+    tab.workspace = workspace > 0 ? workspace : active_ws_;
     tabs_.push_back(std::move(tab));
 
     CefRefPtr<KiwiClient> client = new KiwiClient(this, private_tab);
@@ -2444,19 +2774,45 @@ void CefShell::close_index(int index) {
         tab.browser->GetHost()->CloseBrowser(false);
         return;
     }
+    const bool was_active = index == active_;
+    const int closed_ws = tab.workspace;
     tabs_.erase(tabs_.begin() + index);
     if (tabs_.empty()) {
         DestroyWindow(hwnd_);
         return;
     }
-    if (active_ >= static_cast<int>(tabs_.size())) {
-        activate_index(static_cast<int>(tabs_.size()) - 1);
-    } else {
-        if (active_ > index) --active_;
-        layout();
-        update_omnibox();
-        update_window_title();
+    if (was_active) {
+        // Stay inside the workspace: nearest remaining neighbor, else the
+        // empty-workspace state.
+        int target = -1;
+        for (int g = index; g < static_cast<int>(tabs_.size()); ++g) {
+            if (tabs_[static_cast<size_t>(g)].workspace == closed_ws) {
+                target = g;
+                break;
+            }
+        }
+        if (target < 0) {
+            for (int g = index - 1; g >= 0; --g) {
+                if (tabs_[static_cast<size_t>(g)].workspace == closed_ws) {
+                    target = g;
+                    break;
+                }
+            }
+        }
+        if (target >= 0) {
+            activate_index(target);
+        } else {
+            active_ = -1;
+            layout();
+            update_omnibox();
+            update_window_title();
+        }
+        return;
     }
+    if (active_ > index) --active_;
+    layout();
+    update_omnibox();
+    update_window_title();
 }
 
 void CefShell::close_active_tab() {
@@ -2465,8 +2821,12 @@ void CefShell::close_active_tab() {
 
 void CefShell::close_others(int keep_index) {
     if (keep_index < 0 || keep_index >= static_cast<int>(tabs_.size())) return;
+    const int ws = tabs_[static_cast<size_t>(keep_index)].workspace;
     for (int i = static_cast<int>(tabs_.size()) - 1; i >= 0; --i) {
-        if (i != keep_index) close_index(i);
+        if (i != keep_index
+            && tabs_[static_cast<size_t>(i)].workspace == ws) {
+            close_index(i);
+        }
     }
     activate_index(keep_index);
 }
@@ -2610,7 +2970,11 @@ void CefShell::update_find_label() {
 }
 
 void CefShell::update_omnibox() {
-    if (active_ < 0 || active_ >= static_cast<int>(tabs_.size())) return;
+    if (active_ < 0 || active_ >= static_cast<int>(tabs_.size())) {
+        // Empty workspace: keep the cue banner visible instead of a stale URL.
+        if (GetFocus() != omnibox_) SetWindowTextW(omnibox_, L"");
+        return;
+    }
     if (GetFocus() == omnibox_) return;
     const std::string& url = tabs_[active_].url;
     SetWindowTextW(omnibox_, wide_from_utf8(
@@ -2643,6 +3007,14 @@ void CefShell::save_session_now() {
         data.tabs.push_back(std::move(entry));
     }
     mustela::save_session(rt->profile_root + "/session.toml", data);
+
+    // Workspace overlay aligned 1:1 with the session tab order.
+    WorkspaceSessionState ws_state;
+    ws_state.active_workspace = active_ws_;
+    for (const WinTab& tab : tabs_) {
+        ws_state.tab_workspaces.push_back(tab.workspace);
+    }
+    save_workspace_session(rt->profile_root, ws_state);
 }
 
 bool CefShell::restore_session() {
@@ -2660,12 +3032,254 @@ bool CefShell::restore_session() {
             tabs_.back().title = entry.title;
         }
     }
+    // Workspace overlay: per-tab assignment aligned with the session order.
+    WorkspaceSessionState ws_state;
+    if (load_workspace_session(rt->profile_root, ws_state)) {
+        for (size_t i = 0; i < tabs_.size()
+             && i < ws_state.tab_workspaces.size(); ++i) {
+            const int ws = ws_state.tab_workspaces[i];
+            tabs_[i].workspace = ws_index_of(ws) >= 0
+                ? ws : workspaces_.front().id;
+        }
+        if (ws_index_of(ws_state.active_workspace) >= 0) {
+            active_ws_ = ws_state.active_workspace;
+        }
+    }
     int first = 0;
-    if (data.active >= 0 && data.active < static_cast<int>(tabs_.size())) {
+    if (data.active >= 0 && data.active < static_cast<int>(tabs_.size())
+        && tabs_[static_cast<size_t>(data.active)].workspace == active_ws_) {
         first = data.active;
+    } else {
+        std::vector<int> list = ws_tabs();
+        if (!list.empty()) first = list.front();
     }
     activate_index(first);
     return true;
+}
+
+// ---- Opera-style workspaces -----------------------------------------------
+
+void CefShell::load_workspaces_state() {
+    Runtime* rt = runtime();
+    workspaces_ = rt ? kiwi::load_workspaces(rt->config_dir)
+                     : std::vector<WorkspaceDef>{};
+    if (workspaces_.empty()) {
+        workspaces_.push_back(WorkspaceDef{1, "Personal", "home"});
+    }
+    if (ws_index_of(active_ws_) < 0) active_ws_ = workspaces_.front().id;
+    // Tabs pointing at a removed workspace move to the first one.
+    const int fallback = workspaces_.front().id;
+    for (WinTab& tab : tabs_) {
+        if (ws_index_of(tab.workspace) < 0) tab.workspace = fallback;
+    }
+}
+
+void CefShell::reload_workspaces_state() {
+    load_workspaces_state();
+    clamp_tab_scroll();
+    layout();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+std::vector<int> CefShell::ws_tabs() const {
+    std::vector<int> list;
+    for (size_t i = 0; i < tabs_.size(); ++i) {
+        if (tabs_[i].workspace == active_ws_) list.push_back(static_cast<int>(i));
+    }
+    return list;
+}
+
+int CefShell::ws_tab_count() const {
+    int n = 0;
+    for (const WinTab& tab : tabs_) {
+        if (tab.workspace == active_ws_) ++n;
+    }
+    return n;
+}
+
+int CefShell::slot_of_tab(int global_index) const {
+    if (global_index < 0 || global_index >= static_cast<int>(tabs_.size())) {
+        return -1;
+    }
+    if (tabs_[static_cast<size_t>(global_index)].workspace != active_ws_) return -1;
+    int slot = 0;
+    for (int i = 0; i < global_index; ++i) {
+        if (tabs_[static_cast<size_t>(i)].workspace == active_ws_) ++slot;
+    }
+    return slot;
+}
+
+int CefShell::ws_index_of(int ws_id) const {
+    for (size_t i = 0; i < workspaces_.size(); ++i) {
+        if (workspaces_[i].id == ws_id) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int CefShell::ws_at(const POINT& cl) const {
+    for (size_t i = 0; i < ws_pills_.size(); ++i) {
+        if (PtInRect(&ws_pills_[i], cl)) return static_cast<int>(i);
+    }
+    for (size_t i = 0; i < ws_chips_.size(); ++i) {
+        if (PtInRect(&ws_chips_[i], cl)) return static_cast<int>(i);
+    }
+    // The zen "+" pill reports as the one-past index.
+    if (!IsRectEmpty(&ws_add_pill_) && PtInRect(&ws_add_pill_, cl)) {
+        return static_cast<int>(workspaces_.size());
+    }
+    return -1;
+}
+
+bool CefShell::ws_add_hit(const POINT& cl) const {
+    return !IsRectEmpty(&ws_add_pill_) && PtInRect(&ws_add_pill_, cl) != FALSE;
+}
+
+void CefShell::switch_workspace(int ws_id) {
+    if (ws_id == active_ws_ || ws_index_of(ws_id) < 0) return;
+    // Remember the current tab so switching back restores it.
+    if (active_ >= 0 && active_ < static_cast<int>(tabs_.size())
+        && tabs_[static_cast<size_t>(active_)].workspace == active_ws_) {
+        ws_active_tab_[active_ws_] =
+            tabs_[static_cast<size_t>(active_)].browser_id;
+    }
+    active_ws_ = ws_id;
+    tab_scroll_ = 0;
+    int target = -1;
+    auto remembered = ws_active_tab_.find(ws_id);
+    if (remembered != ws_active_tab_.end() && remembered->second) {
+        target = index_by_id(remembered->second);
+        if (target >= 0
+            && tabs_[static_cast<size_t>(target)].workspace != ws_id) {
+            target = -1;  // stale memory (tab moved on or closed)
+        }
+    }
+    if (target < 0) {
+        std::vector<int> list = ws_tabs();
+        if (!list.empty()) target = list.front();
+    }
+    if (target >= 0) {
+        activate_index(target);
+    } else {
+        active_ = -1;
+        layout();
+        update_omnibox();
+        update_window_title();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
+void CefShell::move_tab_to_workspace(int global_index, int ws_id) {
+    if (global_index < 0 || global_index >= static_cast<int>(tabs_.size())) return;
+    if (ws_index_of(ws_id) < 0) return;
+    WinTab& tab = tabs_[static_cast<size_t>(global_index)];
+    if (tab.workspace == ws_id) return;
+    const bool was_active = global_index == active_;
+    const int old_ws = tab.workspace;
+    tab.workspace = ws_id;
+    if (was_active) {
+        // Activate the nearest tab that stays behind in the old workspace.
+        int target = -1;
+        const int count = static_cast<int>(tabs_.size());
+        for (int step = 1; step <= count && target < 0; ++step) {
+            const int behind = global_index - step;
+            const int ahead = global_index + step;
+            if (behind >= 0
+                && tabs_[static_cast<size_t>(behind)].workspace == old_ws) {
+                target = behind;
+            } else if (ahead < count
+                && tabs_[static_cast<size_t>(ahead)].workspace == old_ws) {
+                target = ahead;
+            }
+        }
+        if (target >= 0) {
+            activate_index(target);
+        } else {
+            active_ = -1;
+            layout();
+            update_omnibox();
+            update_window_title();
+        }
+    } else {
+        layout();
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+// ---- Kiwi Shields ----------------------------------------------------------
+
+int CefShell::shields_session_total() const {
+    int total = 0;
+    for (const WinTab& tab : tabs_) total += tab.shield_count;
+    return total;
+}
+
+void CefShell::on_shields(int browser_id, int blocked) {
+    WinTab* tab = tab_by_id(browser_id);
+    if (!tab) return;
+    tab->shield_count = blocked;
+    if (index_by_id(browser_id) == active_) {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
+void CefShell::open_shields_menu(const POINT& screen) {
+    Runtime* rt = runtime();
+    if (!rt) return;
+    const WinTab* tab = active_ >= 0 && active_ < static_cast<int>(tabs_.size())
+        ? &tabs_[static_cast<size_t>(active_)] : nullptr;
+    std::string page = tab && !tab->url.empty() && !is_start_page_entry(tab->url)
+        ? url_host(tab->url) : std::string();
+    const bool down = !page.empty()
+        && shields::shields_site_mode(rt->shields_cfg, page) == "down";
+
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, kShldToggle,
+        down ? L"Shields: down for this site" : L"Shields: up for this site");
+    if (page.empty()) {
+        EnableMenuItem(menu, kShldToggle, MF_BYCOMMAND | MF_GRAYED);
+    }
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    std::wstring page_line = L"Blocked on this page: "
+        + std::to_wstring(tab ? tab->shield_count : 0);
+    std::wstring total_line = L"Blocked in this session: "
+        + std::to_wstring(shields_session_total());
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, kShldPage, page_line.c_str());
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, kShldTotal, total_line.c_str());
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (rt->shields_cfg.enabled ? MF_CHECKED : 0),
+        kShldGlobal, L"Block ads and trackers");
+    AppendMenuW(menu, MF_STRING | (rt->shields_cfg.cosmetic ? MF_CHECKED : 0),
+        kShldCosmetic, L"Hide ad placeholders");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, kShldExceptions, L"Shield exceptions...");
+    SetForegroundWindow(hwnd_);
+    const int cmd = TrackPopupMenu(menu,
+        TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+        screen.x, screen.y, 0, hwnd_, nullptr);
+    DestroyMenu(menu);
+    switch (cmd) {
+        case kShldToggle:
+            shields::shields_set_site_mode(rt->shields_cfg, page,
+                                           down ? "up" : "down");
+            shields::save_shields(rt->config_dir, rt->shields_cfg);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            break;
+        case kShldGlobal:
+            rt->shields_cfg.enabled = !rt->shields_cfg.enabled;
+            shields::save_shields(rt->config_dir, rt->shields_cfg);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            break;
+        case kShldCosmetic:
+            rt->shields_cfg.cosmetic = !rt->shields_cfg.cosmetic;
+            shields::save_shields(rt->config_dir, rt->shields_cfg);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            break;
+        case kShldExceptions:
+            open_shields_window(hwnd_);
+            break;
+        default:
+            break;
+    }
 }
 
 CefRefPtr<CefBrowser> CefShell::active_browser() {
@@ -2693,8 +3307,12 @@ void CefShell::on_created(CefRefPtr<CefBrowser> browser) {
             tab.browser = browser;
             tab.browser_id = browser->GetIdentifier();
             if (!closing_) {
-                active_ = static_cast<int>(&tab - tabs_.data());
                 update_favicon_host(tab);
+                // Only a tab in the active workspace steals activation;
+                // background workspaces keep their current selection.
+                if (tab.workspace == active_ws_) {
+                    active_ = static_cast<int>(&tab - tabs_.data());
+                }
             }
             layout();
             update_omnibox();
@@ -2713,6 +3331,7 @@ void CefShell::on_closed(int browser_id) {
     int index = index_by_id(browser_id);
     if (index < 0) return;
     bool was_active = index == active_;
+    const int closed_ws = tabs_[static_cast<size_t>(index)].workspace;
     tabs_.erase(tabs_.begin() + index);
     if (tabs_.empty()) {
         active_ = -1;
@@ -2721,10 +3340,29 @@ void CefShell::on_closed(int browser_id) {
         return;
     }
     if (was_active) {
-        if (active_ >= static_cast<int>(tabs_.size())) {
-            active_ = static_cast<int>(tabs_.size()) - 1;
+        int target = -1;
+        for (int g = index; g < static_cast<int>(tabs_.size()); ++g) {
+            if (tabs_[static_cast<size_t>(g)].workspace == closed_ws) {
+                target = g;
+                break;
+            }
         }
-        activate_index(active_);
+        if (target < 0) {
+            for (int g = index - 1; g >= 0; --g) {
+                if (tabs_[static_cast<size_t>(g)].workspace == closed_ws) {
+                    target = g;
+                    break;
+                }
+            }
+        }
+        if (target >= 0) {
+            activate_index(target);
+        } else {
+            active_ = -1;
+            layout();
+            update_omnibox();
+            update_window_title();
+        }
         return;
     }
     if (active_ > index) --active_;
@@ -2777,16 +3415,18 @@ void CefShell::on_status(int browser_id, const std::string& text) {
 }
 
 void CefShell::on_popup(int browser_id, const std::string& url, bool private_tab) {
-    (void)browser_id;
-    int index = add_tab(url, private_tab);
+    WinTab* source = tab_by_id(browser_id);
+    int ws = source ? source->workspace : active_ws_;
+    int index = add_tab(url, private_tab, ws);
     activate_index(index);
 }
 
 void CefShell::on_open_url(int browser_id, const std::string& url, bool background) {
     WinTab* source = tab_by_id(browser_id);
     bool private_tab = source ? source->private_tab : false;
+    int ws = source ? source->workspace : active_ws_;
     if (url.empty()) return;
-    int index = add_tab(url, private_tab);
+    int index = add_tab(url, private_tab, ws);
     if (!background) activate_index(index);
 }
 
@@ -2884,10 +3524,28 @@ void CefShell::on_hotkey(Hotkey key) {
             if (CefRefPtr<CefBrowser> browser = active_browser()) browser->GoForward();
             break;
         }
+        case HK_WS_1: case HK_WS_2: case HK_WS_3: case HK_WS_4:
+        case HK_WS_5: case HK_WS_6: case HK_WS_7: case HK_WS_8: {
+            int index = key - HK_WS_1;
+            if (index >= 0 && index < static_cast<int>(workspaces_.size())) {
+                switch_workspace(workspaces_[static_cast<size_t>(index)].id);
+            }
+            break;
+        }
         case HK_NONE:
         default:
             break;
     }
+}
+
+void sync_workspaces() {
+    EnumWindows([](HWND hwnd, LPARAM) -> BOOL {
+        wchar_t cls[32];
+        if (GetClassNameW(hwnd, cls, 32) && wcscmp(cls, kWindowClass) == 0) {
+            PostMessageW(hwnd, WM_APP_SYNC_WS, 0, 0);
+        }
+        return TRUE;
+    }, 0);
 }
 
 int cef_shell_main(bool self_test) {

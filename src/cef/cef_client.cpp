@@ -73,6 +73,55 @@ std::string join_path(const std::string& dir, const std::string& name) {
     return dir + "/" + name;
 }
 
+// Defined with the context-menu helpers below; the Shields cosmetic pass in
+// OnLoadEnd runs earlier in the file.
+bool is_web_url(const std::string& url);
+
+// Curated cosmetic-filter selectors: ids and classes that ad frames use
+// across the web (easylist generic-hide subset, kept conservative so legit
+// content never disappears). Injected as one hidden <style> on load end.
+const char* const kCosmeticSelectors[] = {
+    "#ad", "#ads", "#ad-area", "#ad-banner", "#ad-block", "#ad-box",
+    "#ad-column", "#ad-container", "#ad-content", "#ad-frame", "#ad-grid",
+    "#ad-holder", "#ad-label", "#ad-layer", "#ad-placeholder", "#ad-row",
+    "#ad-slot", "#ad-space", "#ad-spot", "#ad-text", "#ad-top",
+    "#ad-unit", "#ad-wrap", "#ad-wrapper", "#ad-zone", "#adbox",
+    "#adcode", "#adcontainer", "#adframe", "#adholder", "#adlabel",
+    "#adlayer", "#ads", "#ads-area", "#ads-block", "#ads-box",
+    "#ads-container", "#ads-holder", "#ads-wrapper", "#adsbox",
+    "#adsense", "#adsense-container", "#adsframe", "#adv", "#advert",
+    "#advert-box", "#advert-container", "#advertisement", "#advertisements",
+    "#advertising", "#advertorial", "#advtop", "#banner-ad", "#banner-ads",
+    "#dfp-ad", "#dfp_banner", "#google-ad", "#google-ads", "#google_ads",
+    "#google_ads_frame", "#google-adsense", "#top-ad", "#topads",
+    ".ad-banner", ".ad-block", ".ad-box", ".ad-container", ".ad-frame",
+    ".ad-label", ".ad-placeholder", ".ad-slot", ".ad-space", ".ad-text",
+    ".ad-top", ".ad-unit", ".ad-wrap", ".ad-wrapper", ".adsbygoogle",
+    ".advert", ".advert-box", ".advertisement", ".advertisements",
+    ".banner-ad", ".banner-ads", ".dfp-ad", ".google-ad", ".google-ads",
+    "[id^=\"taboola-\"]", "[id^=\"google_ads_\"]", "[id^=\"div-gpt-ad-\"]",
+    "[class^=\"taboola-\"]"
+};
+
+std::string cosmetic_script() {
+    static std::string script;
+    if (script.empty()) {
+        std::string joined;
+        for (const char* selector : kCosmeticSelectors) {
+            if (!joined.empty()) joined += ",";
+            joined += selector;
+        }
+        script = "(function(){try{if(document.getElementById('kiwi-shields'))"
+                 "return;var s=document.createElement('style');"
+                 "s.id='kiwi-shields';s.setAttribute('data-kiwi','shields');"
+                 "s.textContent='" + joined +
+                 "{display:none!important;}';"
+                 "(document.head||document.documentElement).appendChild(s);"
+                 "}catch(e){}})();";
+    }
+    return script;
+}
+
 // True when the URL path targets a JavaScript resource. Per-site JS-denied
 // sites get their external scripts cancelled here; inline scripts still run
 // (Chromium has no per-origin script toggle — documented as a partial).
@@ -158,14 +207,43 @@ void KiwiClient::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
     if (host_) host_->on_loading(browser->GetIdentifier(), is_loading);
 }
 
+void KiwiClient::OnLoadStart(CefRefPtr<CefBrowser> browser,
+                             CefRefPtr<CefFrame> frame,
+                             cef_transition_type_t transition_type) {
+    (void)browser;
+    (void)transition_type;
+    if (!frame->IsMain()) return;
+    // New committed page: reset the Shields page counter and remember the
+    // page host for the request-level decisions that follow.
+    page_host_ = url_host(frame->GetURL().ToString());
+    blocked_page_ = 0;
+    if (host_ && browser_id_ != 0) host_->on_shields(browser_id_, 0);
+}
+
 void KiwiClient::OnLoadEnd(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefFrame> frame,
                            int httpStatusCode) {
+    (void)browser;
     (void)httpStatusCode;
+    if (!frame->IsMain()) return;
+
     Runtime* rt = runtime();
-    if (!rt || !rt->site_rules || !frame->IsMain()) return;
+    if (!rt) return;
+
+    const std::string url = frame->GetURL().ToString();
+
+    // Kiwi Shields cosmetic filtering: hide the common ad placeholders once
+    // the document is parsed. Skipped entirely when Shields are off, the
+    // user disabled element hiding or this site lowered its shields.
+    if (rt->shields_cfg.enabled && rt->shields_cfg.cosmetic
+        && is_web_url(url)
+        && shields::shields_site_mode(rt->shields_cfg, url_host(url)) != "down") {
+        frame->ExecuteJavaScript(cosmetic_script(), url, 0);
+    }
+
+    if (!rt->site_rules) return;
     const mustela::SiteDecision site = mustela::resolve_site(
-        rt->policy, *rt->site_rules, frame->GetURL().ToString());
+        rt->policy, *rt->site_rules, url);
     // Chromium zoom level = log(factor) / log(1.2); 0.0 means 100%.
     const double level = site.zoom > 0.0
         ? std::log(site.zoom) / std::log(1.2)
@@ -218,7 +296,6 @@ cef_return_value_t KiwiClient::OnBeforeResourceLoad(CefRefPtr<CefBrowser> browse
                                                     CefRefPtr<CefFrame> frame,
                                                     CefRefPtr<CefRequest> request,
                                                     CefRefPtr<CefCallback> callback) {
-    (void)browser;
     (void)frame;
     (void)callback;
     Runtime* rt = runtime();
@@ -244,7 +321,23 @@ cef_return_value_t KiwiClient::OnBeforeResourceLoad(CefRefPtr<CefBrowser> browse
         return RV_CANCEL;
     }
 
-    if (rt->policy.blocklist) {
+    // Kiwi Shields network filter: cancel requests to blocked hosts while
+    // the page keeps its shields up, feeding the per-page counter. When
+    // Shields are off the legacy mustela tracker blocklist runs instead
+    // (its domains are a subset of the shipped list).
+    if (rt->shields_cfg.enabled) {
+        const std::string host = url_host(url);
+        if (!host.empty()
+            && shields::shields_site_mode(rt->shields_cfg,
+                                          shields_page_host(frame, host)) != "down"
+            && rt->shields_rules.hit(host)) {
+            ++blocked_page_;
+            if (host_ && browser_id_ != 0) {
+                host_->on_shields(browser_id_, blocked_page_);
+            }
+            return RV_CANCEL;
+        }
+    } else if (rt->policy.blocklist) {
         const std::string host = url_host(url);
         if (!host.empty() && rt->blocklist.hit(mustela::normalize_host(host))) {
             return RV_CANCEL;
@@ -256,6 +349,16 @@ cef_return_value_t KiwiClient::OnBeforeResourceLoad(CefRefPtr<CefBrowser> browse
     }
 
     return RV_CONTINUE;
+}
+
+std::string KiwiClient::shields_page_host(CefRefPtr<CefFrame> frame,
+                                          const std::string& request_host) const {
+    // Main-frame navigations decide for themselves; subresources inherit the
+    // cached committed page host, falling back to the request host while the
+    // very first navigation has not reported its URL yet.
+    if (frame && frame->IsMain() && page_host_.empty()) return request_host;
+    if (!page_host_.empty()) return page_host_;
+    return request_host;
 }
 
 bool KiwiClient::cookie_allowed(CefRefPtr<CefRequest> request,
@@ -353,6 +456,11 @@ bool KiwiClient::OnPreKeyEvent(CefRefPtr<CefBrowser> browser,
         if (event.windows_key_code == 'I') key = HK_DEVTOOLS;
         if (event.windows_key_code == 'O') key = HK_BOOKMARKS_WINDOW;
         if (event.windows_key_code == 'H') key = HK_HISTORY_WINDOW;
+    } else if (ctrl && alt && !shift) {
+        if (event.windows_key_code >= '1' && event.windows_key_code <= '8') {
+            key = static_cast<Hotkey>(HK_WS_1
+                + (event.windows_key_code - '1'));
+        }
     } else if (shift && !ctrl && !alt) {
         if (event.windows_key_code == kVkF3) key = HK_FIND_PREV;
     } else if (alt && !ctrl && !shift) {

@@ -28,4 +28,8 @@ HWND shell_main_hwnd();
 // Opens |url| in a new tab of the running shell; no-op when it is down.
 void shell_open_url(const std::string& url);
 
+// Pokes every shell window to re-read workspaces.toml after the workspace
+// manager changed the list (same pattern as sync_settings_rail_side()).
+void sync_workspaces();
+
 }

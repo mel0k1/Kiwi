@@ -45,11 +45,16 @@ add_library(kiwi SHARED
     src/cef/win/history_win.cpp
     src/cef/win/search_engines_win.cpp
     src/cef/win/settings_win.cpp
+    src/cef/win/shields_win.cpp
     src/cef/win/site_rules_win.cpp
     src/cef/win/updater_win.cpp
+    src/cef/win/workspaces_win.cpp
     src/cef/win/kiwi.rc
+    src/shields_rules.cpp
+    src/shields_store.cpp
     src/start_page.cpp
     src/style_store.cpp
+    src/workspaces_store.cpp
     src/diagnostics.cpp)
 
 # Sandbox model since CEF 138: the client is a DLL exporting RunWinMain,
@@ -65,7 +70,10 @@ add_custom_command(TARGET kiwi POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cef/win/kiwi.exe.manifest"
         "$<TARGET_FILE_DIR:kiwi>/kiwi.exe.manifest"
-    COMMENT "Renaming CEF bootstrap.exe to kiwi.exe and shipping the manifest")
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/assets/shields/blocklist.txt"
+        "$<TARGET_FILE_DIR:kiwi>/shields-blocklist.txt"
+    COMMENT "Renaming CEF bootstrap.exe to kiwi.exe, shipping the manifest and the Shields blocklist")
 
 target_include_directories(kiwi PRIVATE
     src
@@ -103,4 +111,14 @@ if(KIWI_BUILD_TESTS)
     add_executable(kiwi_style_store_tests src/tests/test_style_store.cpp src/style_store.cpp)
     target_include_directories(kiwi_style_store_tests PRIVATE src)
     add_test(NAME kiwi_style_store_tests COMMAND kiwi_style_store_tests)
+
+    add_executable(kiwi_shields_tests src/tests/test_shields.cpp
+        src/shields_rules.cpp src/shields_store.cpp)
+    target_include_directories(kiwi_shields_tests PRIVATE src)
+    add_test(NAME kiwi_shields_tests COMMAND kiwi_shields_tests)
+
+    add_executable(kiwi_workspaces_tests src/tests/test_workspaces_store.cpp
+        src/workspaces_store.cpp)
+    target_include_directories(kiwi_workspaces_tests PRIVATE src)
+    add_test(NAME kiwi_workspaces_tests COMMAND kiwi_workspaces_tests)
 endif()

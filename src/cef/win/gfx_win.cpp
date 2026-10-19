@@ -773,11 +773,138 @@ void draw_glyph(HDC dc, const RECT& rect, Glyph glyph, COLORREF color,
             g->DrawLine(pen.get(), X(9.2f), Y(9.8f), X(9.2f), Y(12.6f));
             break;
         }
+        case Glyph::Briefcase: {
+            g->DrawLine(pen.get(), X(3), Y(6), X(13), Y(6));
+            g->DrawLine(pen.get(), X(13), Y(6), X(13), Y(12.4f));
+            g->DrawLine(pen.get(), X(13), Y(12.4f), X(3), Y(12.4f));
+            g->DrawLine(pen.get(), X(3), Y(12.4f), X(3), Y(6));
+            g->DrawLine(pen.get(), X(6), Y(6), X(6), Y(4.4f));
+            g->DrawLine(pen.get(), X(6), Y(4.4f), X(10), Y(4.4f));
+            g->DrawLine(pen.get(), X(10), Y(4.4f), X(10), Y(6));
+            g->DrawLine(pen.get(), X(3), Y(9), X(13), Y(9));
+            break;
+        }
+        case Glyph::Code: {
+            g->DrawLine(pen.get(), X(5.8f), Y(5.6f), X(3.2f), Y(8));
+            g->DrawLine(pen.get(), X(3.2f), Y(8), X(5.8f), Y(10.4f));
+            g->DrawLine(pen.get(), X(10.2f), Y(5.6f), X(12.8f), Y(8));
+            g->DrawLine(pen.get(), X(12.8f), Y(8), X(10.2f), Y(10.4f));
+            g->DrawLine(pen.get(), X(9), Y(4.6f), X(7), Y(11.4f));
+            break;
+        }
+        case Glyph::Gamepad: {
+            float rx = 5.6f;
+            float ry = 4.0f;
+            g->DrawEllipse(pen.get(), Gdiplus::RectF(X(8 - rx), Y(8 - ry),
+                2 * rx * unit, 2 * ry * unit));
+            g->DrawLine(pen.get(), X(5.4f), Y(8), X(7.4f), Y(8));
+            g->DrawLine(pen.get(), X(6.4f), Y(7), X(6.4f), Y(9));
+            float dot = 0.7f;
+            g->DrawEllipse(pen.get(), Gdiplus::RectF(X(10 - dot), Y(6.8 - dot),
+                2 * dot * unit, 2 * dot * unit));
+            g->DrawEllipse(pen.get(), Gdiplus::RectF(X(11.4f - dot), Y(9 - dot),
+                2 * dot * unit, 2 * dot * unit));
+            break;
+        }
+        case Glyph::Cart: {
+            g->DrawLine(pen.get(), X(2.8f), Y(4.4f), X(4.4f), Y(4.4f));
+            g->DrawLine(pen.get(), X(4.4f), Y(4.4f), X(5.8f), Y(10.6f));
+            g->DrawLine(pen.get(), X(5.8f), Y(10.6f), X(12.2f), Y(10.6f));
+            g->DrawLine(pen.get(), X(12.2f), Y(10.6f), X(13.4f), Y(6.4f));
+            g->DrawLine(pen.get(), X(13.4f), Y(6.4f), X(5.2f), Y(6.4f));
+            float r = 1.0f;
+            g->DrawEllipse(pen.get(), Gdiplus::RectF(X(6.8f - r), Y(12.8f - r),
+                2 * r * unit, 2 * r * unit));
+            g->DrawEllipse(pen.get(), Gdiplus::RectF(X(11 - r), Y(12.8f - r),
+                2 * r * unit, 2 * r * unit));
+            break;
+        }
+        case Glyph::News: {
+            g->DrawLine(pen.get(), X(3.4f), Y(3.6f), X(12.6f), Y(3.6f));
+            g->DrawLine(pen.get(), X(12.6f), Y(3.6f), X(12.6f), Y(12.4f));
+            g->DrawLine(pen.get(), X(12.6f), Y(12.4f), X(3.4f), Y(12.4f));
+            g->DrawLine(pen.get(), X(3.4f), Y(12.4f), X(3.4f), Y(3.6f));
+            g->DrawLine(pen.get(), X(5.4f), Y(6.4f), X(10.6f), Y(6.4f));
+            g->DrawLine(pen.get(), X(5.4f), Y(8.6f), X(10.6f), Y(8.6f));
+            g->DrawLine(pen.get(), X(5.4f), Y(10.4f), X(8.8f), Y(10.4f));
+            break;
+        }
+        case Glyph::Music: {
+            float r = 1.5f;
+            g->DrawEllipse(pen.get(), Gdiplus::RectF(X(6.2f - r), Y(11 - r),
+                2 * r * unit, 2 * r * unit));
+            g->DrawLine(pen.get(), X(7.7f), Y(11), X(7.7f), Y(4));
+            g->DrawLine(pen.get(), X(7.7f), Y(4), X(11), Y(5.2f));
+            g->DrawLine(pen.get(), X(11), Y(5.2f), X(11), Y(7));
+            break;
+        }
+        case Glyph::Mail: {
+            g->DrawLine(pen.get(), X(3), Y(4.6f), X(13), Y(4.6f));
+            g->DrawLine(pen.get(), X(13), Y(4.6f), X(13), Y(11.4f));
+            g->DrawLine(pen.get(), X(13), Y(11.4f), X(3), Y(11.4f));
+            g->DrawLine(pen.get(), X(3), Y(11.4f), X(3), Y(4.6f));
+            g->DrawLine(pen.get(), X(3.4f), Y(5.2f), X(8), Y(8.6f));
+            g->DrawLine(pen.get(), X(8), Y(8.6f), X(12.6f), Y(5.2f));
+            break;
+        }
+        case Glyph::Heart: {
+            Gdiplus::GraphicsPath heart;
+            heart.StartFigure();
+            heart.AddBezier(X(8), Y(12.8f), X(4.4f), Y(10.2f), X(2.8f), Y(8.6f),
+                            X(2.8f), Y(6.6f));
+            heart.AddBezier(X(2.8f), Y(6.6f), X(2.8f), Y(4.4f), X(5.8f), Y(4),
+                            X(8), Y(6.6f));
+            heart.AddBezier(X(8), Y(6.6f), X(10.2f), Y(4), X(13.2f), Y(4.4f),
+                            X(13.2f), Y(6.6f));
+            heart.AddBezier(X(13.2f), Y(6.6f), X(13.2f), Y(8.6f), X(11.6f),
+                            Y(10.2f), X(8), Y(12.8f));
+            heart.CloseFigure();
+            g->DrawPath(pen.get(), &heart);
+            break;
+        }
+        case Glyph::Flame: {
+            Gdiplus::GraphicsPath flame;
+            flame.StartFigure();
+            flame.AddBezier(X(8), Y(2.6f), X(9.6f), Y(5), X(12.4f), Y(6.8f),
+                            X(12.4f), Y(9.6f));
+            flame.AddBezier(X(12.4f), Y(9.6f), X(12.4f), Y(11.8f), X(10.4f),
+                            Y(13.4f), X(8), Y(13.4f));
+            flame.AddBezier(X(8), Y(13.4f), X(5.6f), Y(13.4f), X(3.6f), Y(11.8f),
+                            X(3.6f), Y(9.6f));
+            flame.AddBezier(X(3.6f), Y(9.6f), X(3.6f), Y(7.4f), X(5), Y(6.2f),
+                            X(6.2f), Y(4.6f));
+            flame.AddBezier(X(6.2f), Y(4.6f), X(6.9f), Y(3.7f), X(7.6f),
+                            Y(3.2f), X(8), Y(2.6f));
+            flame.CloseFigure();
+            g->DrawPath(pen.get(), &flame);
+            break;
+        }
         default:
             break;
     }
 
     delete g;
+}
+
+bool glyph_from_name(const std::string& name, Glyph* out) {
+    static const struct {
+        const char* name;
+        Glyph glyph;
+    } kMap[] = {
+        {"home", Glyph::Home},       {"briefcase", Glyph::Briefcase},
+        {"code", Glyph::Code},       {"gamepad", Glyph::Gamepad},
+        {"cart", Glyph::Cart},       {"news", Glyph::News},
+        {"music", Glyph::Music},     {"mail", Glyph::Mail},
+        {"star", Glyph::Star},       {"heart", Glyph::Heart},
+        {"flame", Glyph::Flame},     {"globe", Glyph::Globe},
+    };
+    for (const auto& entry : kMap) {
+        if (name == entry.name) {
+            if (out) *out = entry.glyph;
+            return true;
+        }
+    }
+    return false;
 }
 
 void draw_image_fit(HDC dc, const RECT& rect, void* image) {

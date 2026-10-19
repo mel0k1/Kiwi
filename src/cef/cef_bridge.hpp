@@ -23,7 +23,16 @@ enum Hotkey {
     HK_DEVTOOLS,
     HK_BOOKMARKS_WINDOW,
     HK_HISTORY_WINDOW,
-    HK_SETTINGS
+    HK_SETTINGS,
+    // Ctrl+Alt+1..8: switch to the n-th workspace (no-op past the last one).
+    HK_WS_1,
+    HK_WS_2,
+    HK_WS_3,
+    HK_WS_4,
+    HK_WS_5,
+    HK_WS_6,
+    HK_WS_7,
+    HK_WS_8
 };
 
 // Shell-facing callbacks the CEF client forwards. Every method runs on the
@@ -46,6 +55,9 @@ public:
                              bool background) = 0;
     virtual void on_favicon_urls(int browser_id,
                                  const std::vector<std::string>& urls) = 0;
+    // Kiwi Shields: the running page blocked count went up (network filter
+    // cancelled a request on this tab). Fired on the UI thread per hit.
+    virtual void on_shields(int browser_id, int blocked) = 0;
 };
 
 // Host part of a URL: strips scheme, userinfo, port and query, lowercases.

@@ -106,8 +106,22 @@ enum class Glyph {
     Palette,
     Shield,
     Database,
-    Home
+    Home,
+    Briefcase,
+    Code,
+    Gamepad,
+    Cart,
+    News,
+    Music,
+    Mail,
+    Heart,
+    Flame
 };
+
+// Maps a workspace glyph name ("home", "briefcase", ...) to its Glyph; used
+// by the rail pills and the workspace manager combo. Returns false for
+// unknown names.
+bool glyph_from_name(const std::string& name, Glyph* out);
 
 // Anti-aliased vector glyph centered in |rect| on a 16x16 design grid.
 // |spin_phase| (0..15) rotates the Spinner arc.

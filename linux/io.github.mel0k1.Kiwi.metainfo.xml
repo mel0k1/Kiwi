@@ -27,6 +27,15 @@
     <binary>kiwi</binary>
   </provides>
   <releases>
+    <release version="0.22.0" date="2026-10-19">
+      <description>
+        <p>Opera-style switchable workspaces (pills in the Zen rail and glyph chips in the
+        classic strip, a manager in settings, per-workspace session restore, Ctrl+Alt+1..8)
+        and Kiwi Shields: Brave-style ad and tracker blocking with a 71k-domain blocklist,
+        cosmetic placeholder hiding, a shield button with live per-page counters in the
+        omnibox, per-site up/down toggles and an exceptions editor.</p>
+      </description>
+    </release>
     <release version="0.7.0" date="2026-10-17">
       <description>
         <p>Import bookmarks from other browsers: a Settings page detects Chrome, Edge, Brave,
