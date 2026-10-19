@@ -992,7 +992,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 if (ws < static_cast<int>(self->workspaces_.size())) {
                     self->switch_workspace(self->workspaces_[static_cast<size_t>(ws)].id);
                 } else {
-                    self->open_workspaces_window(self->hwnd_);
+                    open_workspaces_window(self->hwnd_);
                 }
                 return 0;
             }
@@ -1188,7 +1188,7 @@ LRESULT CALLBACK CefShell::wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM l
                 return 0;
             }
             if (self->ws_at(cl) >= 0 || self->ws_add_hit(cl)) {
-                self->open_workspaces_window(self->hwnd_);
+                open_workspaces_window(self->hwnd_);
                 return 0;
             }
             int tab = self->tab_at(cl);
